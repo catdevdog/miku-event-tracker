@@ -129,7 +129,7 @@ describe('네이버 검색 어댑터', () => {
     expect(api2.calls.length).toBeGreaterThan(0);
   });
 
-  it('401은 그 종류만 다음 날 0시(KST)까지 끄고 나머지는 수집한다 (Application에 검색 API가 종류별로 붙음)', async () => {
+  it('401은 그 종류만 빼고 나머지는 수집하며, 알림은 하루 한 번·고치면 바로 회복 (Application에 검색 API가 종류별로 붙음)', async () => {
     const notEnabled = '{"error":{"errorCode":"401","message":"요청한 API는 이 Application에서 활성화되어 있지 않습니다."}}';
     const api = fakeApi((url) => (KIND_OF(url) === 'news' ? new Response(notEnabled, { status: 401 }) : undefined));
     const r = await createNaverAdapter({ ...keys, fetchImpl: api.impl }).run(fakeSource(), ctx());
@@ -138,16 +138,17 @@ describe('네이버 검색 어댑터', () => {
     expect(state.disabled_kinds).toEqual({ news: '2026-11-23T15:00:00.000Z' });
     expect(r.notes![0]).toContain('뉴스: 네이버 검색 API 오류 (HTTP 401 401) 요청한 API는 이 Application에서 활성화되어 있지 않습니다.');
 
-    // 같은 날 다음 실행: 뉴스는 부르지 않고, 새로 꺼진 게 없으니 알리지 않는다
-    const api2 = fakeApi();
+    // 같은 날 다음 실행: 뉴스도 다시 시도하지만(여전히 401) 이미 알렸으므로 알리지 않는다
+    const api2 = fakeApi((url) => (KIND_OF(url) === 'news' ? new Response(notEnabled, { status: 401 }) : undefined));
     const again = await createNaverAdapter({ ...keys, fetchImpl: api2.impl }).run(fakeSource(), ctx(state, new Date('2026-11-23T01:00:00Z')));
-    expect(api2.calls.map((c) => KIND_OF(c.url))).toEqual(['blog', 'cafearticle']);
+    expect(api2.calls.map((c) => KIND_OF(c.url))).toEqual(['news', 'blog', 'cafearticle']);
     expect(again.notes).toBeUndefined();
-    // 다음 날 0시(KST)가 지나면 다시 시도한다
+    expect((again.state as NaverState).disabled_kinds).toEqual({ news: '2026-11-23T15:00:00.000Z' });
+    // Application을 고치면 다음 실행에서 바로 회복한다
     const api3 = fakeApi();
-    const next = await createNaverAdapter({ ...keys, fetchImpl: api3.impl }).run(fakeSource(), ctx(again.state as NaverState, new Date('2026-11-23T15:00:00Z')));
-    expect(api3.calls.map((c) => KIND_OF(c.url))).toEqual(['news', 'blog', 'cafearticle']);
-    expect((next.state as NaverState).disabled_kinds).toBeUndefined();
+    const fixed = await createNaverAdapter({ ...keys, fetchImpl: api3.impl }).run(fakeSource(), ctx(again.state as NaverState, new Date('2026-11-23T02:00:00Z')));
+    expect(fixed.items.some((i) => i.externalId.includes('n.news.naver.com'))).toBe(true);
+    expect((fixed.state as NaverState).disabled_kinds).toBeUndefined();
   });
 
   it('모든 종류가 401이면(키 오류 등) 바로 알리는 실패, 400·403·404도 바로 알림, 500은 일반 실패, 키가 없으면 실패', async () => {

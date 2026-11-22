@@ -68,7 +68,7 @@
 - 첫 실행: 조합마다 첫 페이지만 보고 최근 14일(`first_run_days`) 글만 낸다. 날짜가 없는 카페글은 기준점만 잡는다.
 - 같은 link가 여러 검색어에 걸리면 한 번만 낸다(`external_id = link`).
 - 오류 처리
-    - 401은 종류별로 처리한다. NAVER API HUB Application에는 뉴스·블로그·카페글 검색 API가 따로 붙어서, 하나만 빠져 있으면 그 종류만 401("요청한 API는 이 Application에서 활성화되어 있지 않습니다")이 난다. 그 종류만 다음 날 0시(KST)까지 끄고(`state.disabled_kinds`) 새로 꺼질 때 한 번 알린다. 모든 종류가 401이면(키 오류 등) `AlertNowError`로 실패시켜 바로 알린다.
+    - 401은 종류별로 처리한다. NAVER API HUB Application에는 뉴스·블로그·카페글 검색 API가 따로 붙어서, 하나만 빠져 있으면 그 종류만 401("요청한 API는 이 Application에서 활성화되어 있지 않습니다")이 난다. 그 종류만 이번 실행에서 빼고 나머지 종류는 계속 수집한다. 매 실행 다시 시도하므로 Application을 고치면 바로 회복하고, 알림은 종류별로 다음 날 0시(KST)까지 한 번만 보낸다(`state.disabled_kinds`). 모든 종류가 401이면(키 오류 등) `AlertNowError`로 실패시켜 바로 알린다.
     - 400·403·404는 `AlertNowError`(첫 실패에서 바로 관리자 경보), 500은 일반 실패(3회 연속이면 경보).
     - 429는 그때까지 모은 글과 상태를 저장하고 다음 날 0시(KST)까지 건너뛴다.
 - 키가 없으면(`NAVER_CLIENT_ID`·`NAVER_CLIENT_SECRET`) 실행마다 실패로 집계되고 3회째에 한 번 알린다.
