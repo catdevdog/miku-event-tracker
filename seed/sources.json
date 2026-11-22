@@ -1,0 +1,345 @@
+[
+  {
+    "name": "크립톤 보도자료 (PR TIMES)",
+    "layer": "L1",
+    "adapter": "html_diff",
+    "target": "https://prtimes.jp/main/html/searchrlp/company_id/52709",
+    "region": "JP",
+    "interval_min": 60,
+    "config": {
+      "todo": "기업별 RSS가 있으면 rss 어댑터로 교체"
+    }
+  },
+  {
+    "name": "X @cfm_miku",
+    "layer": "L1",
+    "adapter": "x_crawl",
+    "target": "cfm_miku",
+    "region": "JP",
+    "interval_min": 60
+  },
+  {
+    "name": "X @mikuexpo",
+    "layer": "L1",
+    "adapter": "x_crawl",
+    "target": "mikuexpo",
+    "region": "GLOBAL",
+    "interval_min": 60
+  },
+  {
+    "name": "X @magicalmirai",
+    "layer": "L1",
+    "adapter": "x_crawl",
+    "target": "magicalmirai",
+    "region": "JP",
+    "interval_min": 60
+  },
+  {
+    "name": "X @39ch_Official",
+    "layer": "L1",
+    "adapter": "x_crawl",
+    "target": "39ch_Official",
+    "region": "JP",
+    "interval_min": 60
+  },
+  {
+    "name": "X @pj_sekai",
+    "layer": "L1",
+    "adapter": "x_crawl",
+    "target": "pj_sekai",
+    "region": "JP",
+    "interval_min": 60
+  },
+  {
+    "name": "X @mikusymphony",
+    "layer": "L1",
+    "adapter": "x_crawl",
+    "target": "mikusymphony",
+    "region": "JP",
+    "interval_min": 60
+  },
+  {
+    "name": "유튜브 39ch",
+    "layer": "L1",
+    "adapter": "rss",
+    "target": "https://www.youtube.com/HatsuneMiku",
+    "region": "GLOBAL",
+    "interval_min": 60,
+    "config": {
+      "resolve_channel_id": true,
+      "feed": "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+    }
+  },
+  {
+    "name": "인스타그램 @cfm_miku_official",
+    "layer": "L1",
+    "adapter": "instagram",
+    "target": "cfm_miku_official",
+    "region": "JP",
+    "interval_min": 180
+  },
+  {
+    "name": "piapro.net",
+    "layer": "L1",
+    "adapter": "html_diff",
+    "target": "https://piapro.net/",
+    "region": "JP",
+    "interval_min": 360
+  },
+  {
+    "name": "mikuexpo.com",
+    "layer": "L1",
+    "adapter": "html_diff",
+    "target": "https://mikuexpo.com/",
+    "region": "GLOBAL",
+    "interval_min": 360
+  },
+  {
+    "name": "magicalmirai.com",
+    "layer": "L1",
+    "adapter": "html_diff",
+    "target": "https://magicalmirai.com/",
+    "region": "JP",
+    "interval_min": 360,
+    "config": {
+      "year_paths": true,
+      "pattern": "https://magicalmirai.com/{year}/"
+    }
+  },
+  {
+    "name": "snowmiku.com",
+    "layer": "L1",
+    "adapter": "html_diff",
+    "target": "https://snowmiku.com/",
+    "region": "JP",
+    "interval_min": 360,
+    "config": {
+      "year_paths": true,
+      "pattern": "https://snowmiku.com/{year}/"
+    }
+  },
+  {
+    "name": "artofmiku.com",
+    "layer": "L1",
+    "adapter": "html_diff",
+    "target": "https://artofmiku.com/",
+    "region": "GLOBAL",
+    "interval_min": 360
+  },
+  {
+    "name": "미쿠 심포니 공식 사이트",
+    "layer": "L1",
+    "adapter": "html_diff",
+    "target": "https://sp.wmg.jp/mikusymphony/",
+    "region": "JP",
+    "interval_min": 360
+  },
+  {
+    "name": "X @agf_korea",
+    "layer": "L2",
+    "adapter": "x_crawl",
+    "target": "agf_korea",
+    "region": "KR",
+    "interval_min": 60
+  },
+  {
+    "name": "AGF 공식 사이트 (부스 배치도·타임테이블)",
+    "layer": "L2",
+    "adapter": "html_diff",
+    "target": "TODO",
+    "region": "KR",
+    "interval_min": 1440,
+    "boost_interval_min": 360,
+    "enabled": false,
+    "config": {
+      "todo": "공식 사이트 URL 미확인"
+    }
+  },
+  {
+    "name": "일러스타 페스",
+    "layer": "L2",
+    "adapter": "html_diff",
+    "target": "https://illustar.net",
+    "region": "KR",
+    "interval_min": 1440,
+    "boost_interval_min": 360
+  },
+  {
+    "name": "X @ANIPLUS_SHOP",
+    "layer": "L2",
+    "adapter": "x_crawl",
+    "target": "ANIPLUS_SHOP",
+    "region": "KR",
+    "interval_min": 180
+  },
+  {
+    "name": "인스타그램 @animatecafe_korea",
+    "layer": "L2",
+    "adapter": "instagram",
+    "target": "animatecafe_korea",
+    "region": "KR",
+    "interval_min": 180
+  },
+  {
+    "name": "팝가 (팝업 모음)",
+    "layer": "L2",
+    "adapter": "html_diff",
+    "target": "https://popga.co.kr/",
+    "region": "KR",
+    "interval_min": 360,
+    "config": {
+      "todo": "검색·목록 URL 확인",
+      "query": "하츠네 미쿠"
+    }
+  },
+  {
+    "name": "코믹월드",
+    "layer": "L2",
+    "adapter": "html_diff",
+    "target": "https://comicw.co.kr/",
+    "region": "KR",
+    "interval_min": 1440,
+    "boost_interval_min": 360
+  },
+  {
+    "name": "프로세카 한국 서버 (뉴버스)",
+    "layer": "L2",
+    "adapter": "x_crawl",
+    "target": "TODO",
+    "region": "KR",
+    "interval_min": 180,
+    "enabled": false,
+    "config": {
+      "todo": "공식 X·인스타그램 계정 미확인"
+    }
+  },
+  {
+    "name": "매지컬플레이 (허가 동인 홀로그램 라이브)",
+    "layer": "L2",
+    "adapter": "x_crawl",
+    "target": "TODO",
+    "region": "KR",
+    "interval_min": 180,
+    "enabled": false,
+    "config": {
+      "todo": "공식 채널 미확인"
+    }
+  },
+  {
+    "name": "멜론티켓",
+    "layer": "L3",
+    "adapter": "playwright",
+    "target": "https://ticket.melon.com/",
+    "region": "KR",
+    "interval_min": 180,
+    "config": {
+      "todo": "오픈 공지·검색이 쓰는 내부 JSON 요청 확인 후 fetch로 교체"
+    }
+  },
+  {
+    "name": "NOL 티켓",
+    "layer": "L3",
+    "adapter": "playwright",
+    "target": "https://nol.yanolja.com/ticket",
+    "region": "KR",
+    "interval_min": 180,
+    "config": {
+      "todo": "오픈 공지·검색이 쓰는 내부 JSON 요청 확인 후 fetch로 교체"
+    }
+  },
+  {
+    "name": "YES24 티켓",
+    "layer": "L3",
+    "adapter": "playwright",
+    "target": "https://ticket.yes24.com/",
+    "region": "KR",
+    "interval_min": 180,
+    "config": {
+      "todo": "오픈 공지·검색이 쓰는 내부 JSON 요청 확인 후 fetch로 교체"
+    }
+  },
+  {
+    "name": "티켓링크",
+    "layer": "L3",
+    "adapter": "playwright",
+    "target": "https://www.ticketlink.co.kr/",
+    "region": "KR",
+    "interval_min": 180,
+    "config": {
+      "todo": "오픈 공지·검색이 쓰는 내부 JSON 요청 확인 후 fetch로 교체"
+    }
+  },
+  {
+    "name": "KOPIS 공연목록",
+    "layer": "L3",
+    "adapter": "kopis",
+    "target": "http://www.kopis.or.kr/openApi/restful/pblprfr",
+    "region": "KR",
+    "interval_min": 1440,
+    "config": {
+      "spec": "docs/kopis.md",
+      "strategy": "scan",
+      "window_days": 31,
+      "lookback_days": 30,
+      "horizon_days": 365,
+      "rows": 100,
+      "request_delay_ms": 300,
+      "implicit_context": true,
+      "max_calls_alert": 200,
+      "titles": [
+        "미쿠",
+        "하츠네",
+        "보컬로이드",
+        "프로젝트 세카이",
+        "MIKU",
+        "VOCALOID"
+      ]
+    }
+  },
+  {
+    "name": "라이브뷰잉",
+    "layer": "L3",
+    "adapter": "html_diff",
+    "target": "https://liveviewing.jp/",
+    "region": "KR",
+    "interval_min": 360
+  },
+  {
+    "name": "네이버 검색 (뉴스·블로그·카페)",
+    "layer": "L4",
+    "adapter": "naver",
+    "target": "https://naverapihub.apigw.ntruss.com",
+    "region": "KR",
+    "interval_min": 60,
+    "config": {
+      "spec": "docs/naver.md",
+      "endpoints": {
+        "news": "/search/v1/news",
+        "blog": "/search/v1/blog",
+        "cafearticle": "/search/v1/cafearticle"
+      },
+      "sort": "date",
+      "display": 100,
+      "max_start": 1000,
+      "queries": [
+        "하츠네 미쿠",
+        "미쿠 팝업",
+        "미쿠 콜라보",
+        "프로세카 콜라보",
+        "보컬로이드 공연"
+      ],
+      "purge_days": 20
+    }
+  },
+  {
+    "name": "haveagood-holiday (크립톤 보도 한국어판)",
+    "layer": "L4",
+    "adapter": "html_diff",
+    "target": "https://haveagood-holiday.com/ko/",
+    "region": "JP",
+    "interval_min": 360,
+    "config": {
+      "query": "하츠네 미쿠"
+    }
+  }
+]
