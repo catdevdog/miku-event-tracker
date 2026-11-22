@@ -27,7 +27,7 @@ export const REGION_META: Record<string, { flag: string; label: string; color: n
 export const regionMeta = (region: string) => REGION_META[region] ?? REGION_META.OTHER!;
 
 /** 상태 점: 수집처 상태, 점검 */
-export const DOT = { ok: '🟢', fail: '🟡', alert: '🔴', wait: '⚪', todo: '🔧', off: '⚫' } as const;
+export const DOT = { ok: '🟢', fail: '🟡', alert: '🔴', wait: '⚪', todo: '🔧', off: '⚫', paused: '⏸️' } as const;
 
 export const CARD_COLOR = {
   miku: 0x39c5bb,

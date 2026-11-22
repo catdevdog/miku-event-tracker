@@ -1,6 +1,8 @@
 import {
   ActivityType,
+  ApplicationCommandOptionType,
   Client,
+  ComponentType,
   Events,
   GatewayIntentBits,
   GuildScheduledEventEntityType,
@@ -9,9 +11,14 @@ import {
   PermissionFlagsBits,
   REST,
   Routes,
+  TextInputStyle,
+  type AutocompleteInteraction,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
+  type GuildMember,
   type Message,
+  type MessageContextMenuCommandInteraction,
+  type ModalSubmitInteraction,
 } from 'discord.js';
 import type { ChannelSender, OutgoingMessage } from './types.js';
 import { commandDefinitions } from './commands.js';
@@ -19,14 +26,50 @@ import { truncate } from './format.js';
 
 export type BotState = 'connecting' | 'ready' | 'error' | 'stopped';
 
+/** 명령·버튼 응답. 문자열이나 메시지는 누른(친) 사람에게만 보인다 */
+export type Reply = string | OutgoingMessage;
+
+/** 입력 창(모달). 입력 칸은 5개까지 */
+export interface ModalSpec {
+  customId: string;
+  title: string;
+  inputs: { id: string; label: string; value?: string; placeholder?: string; required?: boolean; paragraph?: boolean; maxLength?: number }[];
+}
+
+export type CommandResult = Reply | { modal: ModalSpec };
+/** 버튼 결과: 메시지 자체를 바꾸거나(OutgoingMessage), 누른 사람에게만 답하거나(reply), 입력 창을 띄운다(modal) */
+export type ButtonResult = OutgoingMessage | { reply: Reply } | { modal: ModalSpec } | null;
+
+/** 누른·친 사람 정보 */
+export interface InteractionCtx {
+  userId: string;
+  /** 서버 관리 권한(Manage Server)이 있는지 */
+  isAdmin: boolean;
+  /** 서버 안에서의 역할 ID (DM이면 빈 배열) */
+  memberRoleIds: string[];
+}
+
+export interface CommandContext extends InteractionCtx {
+  wsPingMs: number;
+  getString(option: string): string | null;
+  /** 하위 명령 이름 (/관리 소스 → '소스') */
+  subcommand: string | null;
+  /** 메시지 우클릭 명령의 대상 메시지 */
+  targetMessage?: { id: string; channelId: string; url: string; content: string; authorId: string };
+}
+
 export interface DiscordBotOptions {
   token: string;
   appId: string;
   guildId: string;
-  /** 슬래시 명령 응답(텍스트 또는 임베드)을 만든다. 모르는 명령이면 null */
-  onCommand: (name: string, ctx: CommandContext) => Promise<string | OutgoingMessage | null>;
-  /** 버튼(/행사 페이지 이동, 검수 승인·무시)을 눌렀을 때 바꿔 보여 줄 메시지. 모르는 버튼이면 null */
-  onButton?: (customId: string, ctx: { userId: string }) => Promise<OutgoingMessage | null>;
+  /** 슬래시 명령·메시지 우클릭 명령 응답. 모르는 명령이면 null */
+  onCommand: (name: string, ctx: CommandContext) => Promise<CommandResult | null>;
+  /** 명령 옵션 자동완성 후보 (최대 25개) */
+  onAutocomplete?: (name: string, focused: { name: string; value: string }, ctx: InteractionCtx) => Promise<{ name: string; value: string }[]>;
+  /** 버튼을 눌렀을 때. 모르는 버튼이면 null */
+  onButton?: (customId: string, ctx: InteractionCtx) => Promise<ButtonResult>;
+  /** 입력 창 제출 */
+  onModal?: (customId: string, fields: Record<string, string>, ctx: InteractionCtx) => Promise<Reply>;
   /** 봇을 멘션한 질문에 대한 답. null이면 답하지 않는다 */
   onMention?: (question: string, ctx: { userId: string; channelId: string }) => Promise<string | null>;
   /** 봇 상태 메시지(프로필 아래 한 줄). 준비될 때와 10분마다 갱신 */
@@ -34,11 +77,6 @@ export interface DiscordBotOptions {
   /** 처음 준비됐을 때 한 번 */
   onReady?: (tag: string) => void | Promise<void>;
   log?: Pick<Console, 'log' | 'warn' | 'error'>;
-}
-
-export interface CommandContext {
-  wsPingMs: number;
-  getString(option: string): string | null;
 }
 
 /** 디스코드 서버 예약 이벤트(외부 장소) 내용 */
@@ -52,11 +90,38 @@ export interface GuildEventSpec {
   imageUrl?: string;
 }
 
+/** 서버 멤버 (기본 구독 동기화용) */
+export interface MemberInfo {
+  id: string;
+  bot: boolean;
+  roles: string[];
+}
+
+export interface PostOptions {
+  /** 카드 위에 이 역할을 멘션해 알림을 보낸다 */
+  mentionRoleId?: string;
+  /** 이 메시지에 답장으로 보낸다 (지워졌으면 그냥 보낸다) */
+  replyTo?: string;
+}
+
 export interface DiscordBot extends ChannelSender {
   state(): BotState;
   sendDm(userId: string, message: OutgoingMessage): Promise<void>;
-  /** 채널에 보내고 메시지 ID를 돌려준다 (검수 카드처럼 나중에 찾아야 하는 메시지) */
-  post(channelId: string, message: OutgoingMessage): Promise<string>;
+  /** 채널에 보내고 메시지 ID를 돌려준다 (검수 카드·공지처럼 나중에 찾아야 하는 메시지) */
+  post(channelId: string, message: OutgoingMessage, opts?: PostOptions): Promise<string>;
+  /** 봇이 보낸 메시지를 고친다. 메시지가 지워졌으면 code 10008 오류 */
+  editMessage(channelId: string, messageId: string, message: OutgoingMessage): Promise<void>;
+  /** 메시지에서 공개 스레드를 연다 (일주일 동안 조용하면 보관). 스레드 ID를 돌려준다 */
+  startThread(channelId: string, messageId: string, name: string): Promise<string>;
+  pinMessage(channelId: string, messageId: string): Promise<void>;
+  /** 역할이 있으면 그 ID, 없으면 이름으로 찾고, 그래도 없으면 만든다 */
+  ensureRole(spec: { id?: string; name: string; color: number }): Promise<string>;
+  /** 서버 멤버 1000명씩 (Developer Portal에서 Server Members Intent가 켜져 있어야 함) */
+  listMembers(after?: string): Promise<MemberInfo[]>;
+  addMemberRole(userId: string, roleId: string): Promise<void>;
+  removeMemberRole(userId: string, roleId: string): Promise<void>;
+  /** 봇에게 없는 권한 이름 (서버 전체 + channelId 채널 기준) */
+  missingPermissions(channelId?: string): Promise<string[]>;
   /** 서버 예약 이벤트를 만들 권한(이벤트 만들기 또는 이벤트 관리)이 있는지 */
   canManageEvents(): Promise<boolean>;
   createGuildEvent(spec: GuildEventSpec): Promise<string>;
@@ -64,6 +129,12 @@ export interface DiscordBot extends ChannelSender {
   deleteGuildEvent(id: string): Promise<void>;
   stop(): Promise<void>;
 }
+
+/** 디스코드 API 오류 코드 (10008 메시지 없음, 10003 채널 없음, 50007 DM 불가, 50013 권한 없음) */
+export const discordErrorCode = (err: unknown): number | undefined => {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'number' ? code : undefined;
+};
 
 /** 길드 슬래시 명령을 등록한다. 길드 명령은 등록 즉시 반영된다. */
 export async function registerCommands(token: string, appId: string, guildId: string): Promise<void> {
@@ -97,6 +168,20 @@ export async function sendWithFallback(
 }
 
 /**
+ * 역할 멘션을 붙인 메시지. 카드는 맨 위에 멘션 한 줄(Text Display)을 넣고, 대체 본문은 content 앞에 붙인다.
+ * 텍스트 표시 컴포넌트 안의 멘션도 allowedMentions가 허용하면 알림이 간다.
+ */
+export function withRoleMention(msg: OutgoingMessage, roleId: string | undefined): OutgoingMessage {
+  if (!roleId) return msg;
+  const mention = `<@&${roleId}>`;
+  return {
+    ...msg,
+    content: msg.content ? `${mention}\n${msg.content}` : mention,
+    ...(msg.card ? { card: [{ type: ComponentType.TextDisplay, content: mention }, ...msg.card] } : {}),
+  };
+}
+
+/**
  * 봇을 시작한다. 로그인에 실패해도 예외를 던지지 않고 state()가 'error'가 되며, 1·2·5·10분 간격으로 다시 시도한다.
  * 디스코드 장애로 수집까지 멈추지 않게 하기 위해서다. 상태는 /health와 로그로 확인한다.
  */
@@ -104,8 +189,10 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
   const log = opts.log ?? console;
   // 채널 발송·슬래시 명령은 Guilds, 멘션 질문은 GuildMessages.
   // 봇을 멘션한 메시지는 MessageContent(특권 인텐트) 없이도 본문이 온다.
+  // 멤버 목록은 게이트웨이가 아니라 REST(List Guild Members)로 읽으므로 GuildMembers 인텐트를 접속에 넣지 않는다.
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
   let state: BotState = 'connecting';
+  const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
   async function updatePresence() {
     if (!opts.presence || !client.isReady()) return;
@@ -113,7 +200,7 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
       const text = (await opts.presence()).slice(0, 128);
       client.user.setPresence({ activities: [{ name: text, state: text, type: ActivityType.Custom }], status: 'online' });
     } catch (err) {
-      log.warn(`봇 상태 메시지 갱신 실패: ${err instanceof Error ? err.message : String(err)}`);
+      log.warn(`봇 상태 메시지 갱신 실패: ${errText(err)}`);
     }
   }
   let presenceTimer: NodeJS.Timeout | undefined;
@@ -127,27 +214,90 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
     try {
       await registerCommands(opts.token, opts.appId, opts.guildId);
     } catch (err) {
-      log.error(`슬래시 명령 등록 실패: ${err instanceof Error ? err.message : String(err)}`);
+      log.error(`슬래시 명령 등록 실패: ${errText(err)}`);
     }
     try {
       await opts.onReady?.(c.user.tag);
     } catch (err) {
-      log.error(`onReady 처리 실패: ${err instanceof Error ? err.message : String(err)}`);
+      log.error(`onReady 처리 실패: ${errText(err)}`);
     }
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
-    if (interaction.isButton()) {
-      await handleButton(interaction).catch((err: unknown) =>
-        log.error(`버튼 처리 실패 (${interaction.customId}): ${err instanceof Error ? err.message : String(err)}`),
-      );
+    if (interaction.isAutocomplete()) {
+      await handleAutocomplete(interaction).catch((err: unknown) => log.error(`자동완성 실패 (/${interaction.commandName}): ${errText(err)}`));
       return;
     }
-    if (!interaction.isChatInputCommand()) return;
-    await handleCommand(interaction).catch((err: unknown) =>
-      log.error(`명령 처리 실패 (/${interaction.commandName}): ${err instanceof Error ? err.message : String(err)}`),
-    );
+    if (interaction.isButton()) {
+      await handleButton(interaction).catch(async (err: unknown) => {
+        log.error(`버튼 처리 실패 (${interaction.customId}): ${errText(err)}`);
+        await replyError(interaction);
+      });
+      return;
+    }
+    if (interaction.isModalSubmit()) {
+      await handleModal(interaction).catch(async (err: unknown) => {
+        log.error(`입력 창 처리 실패 (${interaction.customId}): ${errText(err)}`);
+        await replyError(interaction);
+      });
+      return;
+    }
+    if (!interaction.isChatInputCommand() && !interaction.isMessageContextMenuCommand()) return;
+    await handleCommand(interaction).catch(async (err: unknown) => {
+      log.error(`명령 처리 실패 (/${interaction.commandName}): ${errText(err)}`);
+      await replyError(interaction);
+    });
   });
+
+  type Repliable = ButtonInteraction | ModalSubmitInteraction | ChatInputCommandInteraction | MessageContextMenuCommandInteraction;
+
+  /** 처리 중 오류가 나면 누른 사람에게만 짧게 알린다 (이미 답했으면 생략) */
+  async function replyError(i: Repliable) {
+    if (i.replied || i.deferred) return;
+    await i.reply({ content: '처리 중에 문제가 생겼어요. 잠시 뒤에 다시 해 주세요.', flags: MessageFlags.Ephemeral }).catch(() => undefined);
+  }
+
+  function interactionCtx(i: { user: { id: string }; member: unknown; memberPermissions: { has(p: bigint): boolean } | null }): InteractionCtx {
+    const member = i.member as GuildMember | { roles?: string[] } | null;
+    const roles = !member
+      ? []
+      : Array.isArray((member as { roles?: unknown }).roles)
+        ? ((member as { roles: string[] }).roles)
+        : [...((member as GuildMember).roles?.cache?.keys() ?? [])];
+    return { userId: i.user.id, isAdmin: i.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false, memberRoleIds: roles };
+  }
+
+  /** 응답(문자열·카드)을 누른 사람에게만 보이게 보낸다 */
+  async function replyEphemeral(i: Repliable, content: Reply) {
+    const msg = typeof content === 'string' ? { content } : content;
+    await sendWithFallback(
+      msg,
+      (card) => i.reply({ components: card, flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2, allowedMentions: { parse: [] } }),
+      (plain) => i.reply({ ...plain, flags: MessageFlags.Ephemeral }),
+      log,
+    );
+  }
+
+  /** 입력 창: Label(18) 안에 TextInput(4) */
+  function modalPayload(spec: ModalSpec) {
+    return {
+      custom_id: spec.customId,
+      title: spec.title.slice(0, 45),
+      components: spec.inputs.slice(0, 5).map((f) => ({
+        type: ComponentType.Label as const,
+        label: f.label.slice(0, 45),
+        component: {
+          type: ComponentType.TextInput as const,
+          custom_id: f.id,
+          style: f.paragraph ? TextInputStyle.Paragraph : TextInputStyle.Short,
+          required: f.required ?? false,
+          ...(f.value ? { value: f.value.slice(0, f.maxLength ?? 4000) } : {}),
+          ...(f.placeholder ? { placeholder: f.placeholder.slice(0, 100) } : {}),
+          ...(f.maxLength ? { max_length: f.maxLength } : {}),
+        },
+      })),
+    };
+  }
 
   // 멘션 질문: 같은 사람은 15초에 한 번, 동시에 2건까지
   const lastAsked = new Map<string, number>();
@@ -158,7 +308,7 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
     const question = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
     const reply = (content: string) =>
       message.reply({ content: truncate(content), allowedMentions: { parse: [], repliedUser: false } }).catch((err: unknown) =>
-        log.error(`멘션 답장 실패: ${err instanceof Error ? err.message : String(err)}`),
+        log.error(`멘션 답장 실패: ${errText(err)}`),
       );
     if (!question) {
       await reply('미쿠 행사에 대해 물어보세요. 예: `@봇 이번 달 국내 미쿠 행사 뭐 있어?`');
@@ -177,7 +327,7 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
       const answer = await opts.onMention(question, { userId: message.author.id, channelId: message.channelId });
       if (answer) await reply(answer);
     } catch (err) {
-      log.error(`멘션 질문 처리 실패: ${err instanceof Error ? err.message : String(err)}`);
+      log.error(`멘션 질문 처리 실패: ${errText(err)}`);
       await reply('답을 만드는 중에 문제가 생겼어요. 잠시 뒤에 다시 물어봐 주세요.');
     } finally {
       answering--;
@@ -190,29 +340,62 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
   });
   client.on(Events.ShardResume, () => log.log('디스코드 게이트웨이 재연결'));
 
-  async function handleCommand(interaction: ChatInputCommandInteraction) {
-    const content = await opts.onCommand(interaction.commandName, {
+  async function handleCommand(interaction: ChatInputCommandInteraction | MessageContextMenuCommandInteraction) {
+    const ctx: CommandContext = {
+      ...interactionCtx(interaction),
       wsPingMs: client.ws.ping,
-      getString: (o) => interaction.options.getString(o),
-    });
-    if (content === null) return;
+      getString: (o) => (interaction.isChatInputCommand() ? interaction.options.getString(o) : null),
+      subcommand: interaction.isChatInputCommand() ? interaction.options.getSubcommand(false) : null,
+    };
+    if (interaction.isMessageContextMenuCommand()) {
+      const m = interaction.targetMessage;
+      ctx.targetMessage = { id: m.id, channelId: m.channelId, url: m.url, content: m.content ?? '', authorId: m.author.id };
+    }
+    const result = await opts.onCommand(interaction.commandName, ctx);
+    if (result === null) return;
+    if (typeof result === 'object' && 'modal' in result) {
+      await interaction.showModal(modalPayload(result.modal));
+      return;
+    }
     // 명령 응답은 친 사람에게만 보인다
-    const msg = typeof content === 'string' ? { content } : content;
-    await sendWithFallback(
-      msg,
-      (card) => interaction.reply({ components: card, flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2, allowedMentions: { parse: [] } }),
-      (plain) => interaction.reply({ ...plain, flags: MessageFlags.Ephemeral }),
-      log,
-    );
+    await replyEphemeral(interaction, result);
+  }
+
+  async function handleAutocomplete(interaction: AutocompleteInteraction) {
+    const focused = interaction.options.getFocused(true);
+    if (!opts.onAutocomplete || focused.type !== ApplicationCommandOptionType.String) {
+      await interaction.respond([]);
+      return;
+    }
+    const choices = await opts.onAutocomplete(interaction.commandName, { name: focused.name, value: String(focused.value) }, interactionCtx(interaction));
+    await interaction.respond(choices.slice(0, 25).map((c) => ({ name: c.name.slice(0, 100), value: c.value.slice(0, 100) })));
   }
 
   async function handleButton(interaction: ButtonInteraction) {
-    const msg = opts.onButton ? await opts.onButton(interaction.customId, { userId: interaction.user.id }) : null;
-    if (!msg?.card) {
+    const result = opts.onButton ? await opts.onButton(interaction.customId, interactionCtx(interaction)) : null;
+    if (result && 'modal' in result) {
+      await interaction.showModal(modalPayload(result.modal));
+      return;
+    }
+    if (result && 'reply' in result) {
+      await replyEphemeral(interaction, result.reply);
+      return;
+    }
+    if (!result?.card) {
       await interaction.deferUpdate();
       return;
     }
-    await interaction.update({ components: msg.card, allowedMentions: { parse: [] } });
+    await interaction.update({ components: result.card, allowedMentions: { parse: [] } });
+  }
+
+  async function handleModal(interaction: ModalSubmitInteraction) {
+    if (!opts.onModal) return;
+    const fields: Record<string, string> = {};
+    for (const [id, f] of interaction.fields.fields) {
+      const value = (f as { value?: unknown }).value;
+      if (typeof value === 'string') fields[id] = value;
+    }
+    await replyEphemeral(interaction, await opts.onModal(interaction.customId, fields, interactionCtx(interaction)));
   }
 
   // 로그인 실패 시 재시도 간격(분). 토큰이 틀린 경우는 재시도하지 않는다.
@@ -229,7 +412,7 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
       .catch((err: unknown) => {
         state = 'error';
         // discord.js 오류 메시지에는 토큰이 들어가지 않는다.
-        log.error(`디스코드 로그인 실패: ${err instanceof Error ? err.message : String(err)}`);
+        log.error(`디스코드 로그인 실패: ${errText(err)}`);
         const code = (err as { code?: unknown } | null)?.code;
         if (code === 'TokenInvalid') {
           log.error(
@@ -251,38 +434,99 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
   }
   login();
 
+  async function sendable(channelId: string) {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !channel.isSendable()) throw new Error(`메시지를 보낼 수 없는 채널입니다: ${channelId}`);
+    return channel;
+  }
+  const guild = () => client.guilds.fetch(opts.guildId);
+
+  /** 역할 멘션·답장을 붙여 보내고 메시지 ID를 돌려준다 */
+  async function post(channelId: string, message: OutgoingMessage, o: PostOptions = {}) {
+    const channel = await sendable(channelId);
+    const msg = withRoleMention(message, o.mentionRoleId);
+    const allowedMentions = { parse: [] as [], roles: o.mentionRoleId ? [o.mentionRoleId] : [], repliedUser: false };
+    const reply = o.replyTo ? { reply: { messageReference: o.replyTo, failIfNotExists: false } } : {};
+    let id = '';
+    await sendWithFallback(
+      msg,
+      async (card) => (id = (await channel.send({ components: card, flags: MessageFlags.IsComponentsV2, allowedMentions, ...reply })).id),
+      async (plain) => (id = (await channel.send({ ...plain, allowedMentions, ...reply })).id),
+      log,
+    );
+    return id;
+  }
+
   return {
     state: () => state,
     isReady: () => state === 'ready' && client.isReady(),
     async send(channelId: string, message: OutgoingMessage) {
-      const channel = await client.channels.fetch(channelId);
-      if (!channel || !channel.isSendable()) throw new Error(`메시지를 보낼 수 없는 채널입니다: ${channelId}`);
+      await post(channelId, message);
+    },
+    post,
+    async editMessage(channelId: string, messageId: string, message: OutgoingMessage) {
+      const channel = await sendable(channelId);
       await sendWithFallback(
         message,
-        (card) => channel.send({ components: card, flags: MessageFlags.IsComponentsV2, allowedMentions: { parse: [] } }),
-        (plain) => channel.send(plain),
+        (card) => channel.messages.edit(messageId, { components: card, flags: MessageFlags.IsComponentsV2, allowedMentions: { parse: [] } }),
+        (plain) => channel.messages.edit(messageId, { content: plain.content ?? null, embeds: plain.embeds ?? [], allowedMentions: { parse: [] } }),
         log,
       );
     },
-    async post(channelId: string, message: OutgoingMessage) {
-      const channel = await client.channels.fetch(channelId);
-      if (!channel || !channel.isSendable()) throw new Error(`메시지를 보낼 수 없는 채널입니다: ${channelId}`);
-      let id = '';
-      await sendWithFallback(
-        message,
-        async (card) => (id = (await channel.send({ components: card, flags: MessageFlags.IsComponentsV2, allowedMentions: { parse: [] } })).id),
-        async (plain) => (id = (await channel.send(plain)).id),
-        log,
-      );
-      return id;
+    async startThread(channelId: string, messageId: string, name: string) {
+      const thread = (await client.rest.post(Routes.threads(channelId, messageId), {
+        body: { name: name.slice(0, 100) || '행사 소식', auto_archive_duration: 10080 },
+      })) as { id: string };
+      return thread.id;
+    },
+    async pinMessage(channelId: string, messageId: string) {
+      const channel = await sendable(channelId);
+      await (await channel.messages.fetch(messageId)).pin();
+    },
+    async ensureRole(spec: { id?: string; name: string; color: number }) {
+      const g = await guild();
+      if (spec.id) {
+        const role = await g.roles.fetch(spec.id).catch(() => null);
+        if (role) return role.id;
+      }
+      const found = (await g.roles.fetch()).find((r) => r.name === spec.name);
+      if (found) return found.id;
+      const created = await g.roles.create({ name: spec.name, colors: { primaryColor: spec.color }, mentionable: true, reason: '미쿠 행사 알림 구독 역할' });
+      return created.id;
+    },
+    async listMembers(after?: string) {
+      const g = await guild();
+      const members = await g.members.list({ limit: 1000, ...(after ? { after } : {}), cache: false });
+      return [...members.values()].map((m) => ({ id: m.id, bot: m.user.bot, roles: [...m.roles.cache.keys()] }));
+    },
+    async addMemberRole(userId: string, roleId: string) {
+      await client.rest.put(Routes.guildMemberRole(opts.guildId, userId, roleId), { reason: '미쿠 행사 알림 구독' });
+    },
+    async removeMemberRole(userId: string, roleId: string) {
+      await client.rest.delete(Routes.guildMemberRole(opts.guildId, userId, roleId), { reason: '미쿠 행사 알림 구독 해제' });
+    },
+    async missingPermissions(channelId?: string) {
+      const g = await guild();
+      const me = await g.members.fetchMe();
+      const missing: string[] = [];
+      if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) missing.push('역할 관리');
+      if (channelId) {
+        const ch = await client.channels.fetch(channelId);
+        const perms = ch && 'permissionsFor' in ch ? ch.permissionsFor(me) : null;
+        if (perms) {
+          if (!perms.has(PermissionFlagsBits.CreatePublicThreads)) missing.push('공개 스레드 만들기');
+          if (!perms.has(PermissionFlagsBits.SendMessagesInThreads)) missing.push('스레드에서 메시지 보내기');
+          if (!perms.has(PermissionFlagsBits.PinMessages) && !perms.has(PermissionFlagsBits.ManageMessages)) missing.push('메시지 고정');
+        }
+      }
+      return missing;
     },
     async canManageEvents() {
-      const guild = await client.guilds.fetch(opts.guildId);
-      const me = await guild.members.fetchMe();
+      const me = await (await guild()).members.fetchMe();
       return me.permissions.has(PermissionFlagsBits.CreateEvents) || me.permissions.has(PermissionFlagsBits.ManageEvents);
     },
     async createGuildEvent(spec: GuildEventSpec) {
-      const guild = await client.guilds.fetch(opts.guildId);
+      const g = await guild();
       const base = {
         name: spec.name.slice(0, 100),
         description: spec.description.slice(0, 1000),
@@ -293,16 +537,16 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
         entityMetadata: { location: spec.location.slice(0, 100) },
       } as const;
       try {
-        return (await guild.scheduledEvents.create({ ...base, ...(spec.imageUrl ? { image: spec.imageUrl } : {}) })).id;
+        return (await g.scheduledEvents.create({ ...base, ...(spec.imageUrl ? { image: spec.imageUrl } : {}) })).id;
       } catch (err) {
         if (!spec.imageUrl) throw err;
-        log.warn(`서버 이벤트 커버 이미지 없이 다시 만듭니다: ${err instanceof Error ? err.message : String(err)}`);
-        return (await guild.scheduledEvents.create(base)).id;
+        log.warn(`서버 이벤트 커버 이미지 없이 다시 만듭니다: ${errText(err)}`);
+        return (await g.scheduledEvents.create(base)).id;
       }
     },
     async editGuildEvent(id: string, spec: GuildEventSpec) {
-      const guild = await client.guilds.fetch(opts.guildId);
-      await guild.scheduledEvents.edit(id, {
+      const g = await guild();
+      await g.scheduledEvents.edit(id, {
         name: spec.name.slice(0, 100),
         description: spec.description.slice(0, 1000),
         scheduledStartTime: spec.startIso,
@@ -311,8 +555,8 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
       });
     },
     async deleteGuildEvent(id: string) {
-      const guild = await client.guilds.fetch(opts.guildId);
-      await guild.scheduledEvents.delete(id);
+      const g = await guild();
+      await g.scheduledEvents.delete(id);
     },
     async sendDm(userId: string, message: OutgoingMessage) {
       const user = await client.users.fetch(userId);

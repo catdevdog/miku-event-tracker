@@ -1,4 +1,4 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { ApplicationCommandType, ContextMenuCommandBuilder, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import type { ServiceStatus } from '../services/status.js';
 import type { SourceStatusRow } from '../services/sources.js';
 import type { RecentRawItem } from '../services/rawItems.js';
@@ -28,9 +28,76 @@ export const commandDefinitions = [
           { name: '전체', value: 'all' },
         ),
     )
+    .addStringOption((o) => o.setName('검색').setDescription('행사 이름으로 찾기 (입력하면 후보가 떠요)').setAutocomplete(true))
     .toJSON(),
   new SlashCommandBuilder().setName('점검').setDescription('지역별 행사 수와 국내 수집처 단계별 건수').toJSON(),
   new SlashCommandBuilder().setName('가이드').setDescription('봇 이용법, 수집 주기, 알림 시점 안내').toJSON(),
+  new SlashCommandBuilder()
+    .setName('제보')
+    .setDescription('봇이 놓친 미쿠 행사를 알려 주세요')
+    .addStringOption((o) => o.setName('링크').setDescription('행사 공지·기사·예매 페이지 주소').setRequired(true))
+    .addStringOption((o) => o.setName('메모').setDescription('어떤 행사인지 한 줄 (선택)').setMaxLength(500))
+    .toJSON(),
+  new ContextMenuCommandBuilder().setName('행사 제보').setType(ApplicationCommandType.Message).toJSON(),
+  new SlashCommandBuilder()
+    .setName('관리')
+    .setDescription('관리자: 수집처·키워드·행사·알림 관리')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand((s) =>
+      s
+        .setName('소스')
+        .setDescription('수집처 멈춤·재개·지금 수집')
+        .addStringOption((o) => o.setName('이름').setDescription('수집처').setRequired(true).setAutocomplete(true))
+        .addStringOption((o) =>
+          o.setName('동작').setDescription('할 일').setRequired(true).addChoices({ name: '멈춤', value: 'pause' }, { name: '재개', value: 'resume' }, { name: '지금 수집', value: 'run' }),
+        ),
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('키워드')
+        .setDescription('키워드 추가·삭제·목록')
+        .addStringOption((o) =>
+          o.setName('동작').setDescription('할 일').setRequired(true).addChoices({ name: '추가', value: 'add' }, { name: '삭제', value: 'remove' }, { name: '목록', value: 'list' }),
+        )
+        .addStringOption((o) => o.setName('단어').setDescription('추가·삭제할 단어').setMaxLength(40))
+        .addStringOption((o) =>
+          o
+            .setName('등급')
+            .setDescription('추가할 때 (기본: 강)')
+            .addChoices(
+              { name: '강 (단독으로 통과)', value: 'strong' },
+              { name: '약 (맥락 단어와 같이 있어야 통과)', value: 'weak' },
+              { name: '맥락', value: 'context' },
+              { name: '제외', value: 'exclude' },
+            ),
+        ),
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('행사')
+        .setDescription('행사 수정·숨기기·다시 보이기')
+        .addStringOption((o) => o.setName('행사').setDescription('행사 이름 또는 #번호').setRequired(true).setAutocomplete(true))
+        .addStringOption((o) =>
+          o.setName('동작').setDescription('할 일').setRequired(true).addChoices({ name: '수정', value: 'edit' }, { name: '숨기기', value: 'hide' }, { name: '다시 보이기', value: 'unhide' }),
+        ),
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('합치기')
+        .setDescription('같은 행사가 두 개로 잡혔을 때 하나로')
+        .addStringOption((o) => o.setName('남길행사').setDescription('남길 행사').setRequired(true).setAutocomplete(true))
+        .addStringOption((o) => o.setName('합칠행사').setDescription('합쳐서 숨길 행사').setRequired(true).setAutocomplete(true)),
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('알림')
+        .setDescription('알림 발송 일시정지·재개')
+        .addStringOption((o) =>
+          o.setName('동작').setDescription('할 일').setRequired(true).addChoices({ name: '일시정지', value: 'pause' }, { name: '재개', value: 'resume' }, { name: '상태', value: 'status' }),
+        ),
+    )
+    .addSubcommand((s) => s.setName('설정').setDescription('알림 역할·구독 패널·상태판을 지금 다시 맞추고 권한을 점검'))
+    .toJSON(),
 ];
 
 export interface PingInfo {
@@ -61,7 +128,7 @@ const COLOR = { info: 0x39c5bb, warn: 0xf5a623 };
 
 // 표의 앞쪽 열은 글자 수가 같은 한글(2글자)·숫자만 써서 디스코드 고정폭 표에서 줄이 맞게 한다.
 const SOURCE_STATE = (r: SourceStatusRow) =>
-  !r.enabled ? '꺼짐' : !r.implemented ? '준비' : r.consecutiveFailures >= 3 ? '경보' : r.consecutiveFailures > 0 ? '실패' : r.lastSuccessAt ? '정상' : '대기';
+  !r.enabled ? '꺼짐' : r.paused ? '멈춤' : !r.implemented ? '준비' : r.consecutiveFailures >= 3 ? '경보' : r.consecutiveFailures > 0 ? '실패' : r.lastSuccessAt ? '정상' : '대기';
 
 export function buildSourcesReply(rows: SourceStatusRow[]): OutgoingMessage {
   const enabled = rows.filter((r) => r.enabled);

@@ -65,6 +65,7 @@ export async function getDiagnostics(db: Db): Promise<Diagnostics> {
     name: string;
     adapter: string;
     enabled: number;
+    paused: number;
     target: string;
     consecutive_failures: number;
     last_success_at: string | null;
@@ -74,7 +75,7 @@ export async function getDiagnostics(db: Db): Promise<Diagnostics> {
     extracted: number;
     linked: number;
   }>(sql`
-    SELECT s.name, s.adapter, s.enabled, s.target, s.consecutive_failures, s.last_success_at,
+    SELECT s.name, s.adapter, s.enabled, s.paused, s.target, s.consecutive_failures, s.last_success_at,
       (SELECT j.status FROM job_runs j WHERE j.source_id = s.id ORDER BY j.id DESC LIMIT 1) AS last_job,
       (SELECT count(*) FROM raw_items r WHERE r.source_id = s.id) AS collected,
       (SELECT count(*) FROM raw_items r WHERE r.source_id = s.id AND r.llm_status <> 'skipped' AND r.keyword_hit IS NOT NULL) AS passed,
@@ -85,7 +86,7 @@ export async function getDiagnostics(db: Db): Promise<Diagnostics> {
   const krSources = rows.map((r) => ({
     name: r.name,
     adapter: r.adapter,
-    schedulable: isSchedulable({ enabled: r.enabled, target: r.target }),
+    schedulable: isSchedulable({ enabled: r.enabled, target: r.target, paused: r.paused }),
     implemented: isImplementedAdapter(r.adapter),
     lastJobStatus: r.last_job,
     consecutiveFailures: r.consecutive_failures,

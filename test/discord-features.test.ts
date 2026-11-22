@@ -94,7 +94,7 @@ describe('검수 대기 → 디스코드 승인', () => {
   });
 
   it('버튼이 안 되는 대체 임베드에는 안내 문구', () => {
-    const msg = reviewMessage({ id: 1, title: 'x', kind: 'popup', officiality: 'licensed', region: 'KR', city: null, venue: null, startDate: null, endDate: null, ticketOpenAt: null, ticketUrl: null, status: 'announced', parentEventId: null, summaryKo: null, dedupKey: 'k', needsReview: 1, createdAt: '', updatedAt: '' }, []);
+    const msg = reviewMessage({ id: 1, title: 'x', kind: 'popup', officiality: 'licensed', region: 'KR', city: null, venue: null, startDate: null, endDate: null, ticketOpenAt: null, ticketUrl: null, status: 'announced', parentEventId: null, summaryKo: null, dedupKey: 'k', needsReview: 1, mergedInto: null, createdAt: '', updatedAt: '' }, []);
     expect(JSON.stringify(msg.embeds)).toContain('버튼을 쓸 수 없습니다');
   });
 });

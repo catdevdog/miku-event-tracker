@@ -21,7 +21,7 @@ import { purgeExpiredItems } from './purge.js';
 import { fetchPageText, naverReadableUrl } from './pageText.js';
 import { planForChange } from '../notify/planner.js';
 import { planReminders } from '../notify/reminders.js';
-import { sendQueued, type DmSender } from '../notify/sender.js';
+import { sendQueued, type DmSender, type SendDeps } from '../notify/sender.js';
 import type { Notifier } from '../notify/notifier.js';
 
 /** 본문이 이보다 짧으면(링크 텍스트·잘린 RSS 설명) 원문 페이지를 가져와 LLM에 넘긴다. */
@@ -92,7 +92,8 @@ export async function processPendingItems(deps: PipelineDeps): Promise<ProcessRe
         }
       }
     }
-    if (!verdict.pass) {
+    // 사용자 제보(manual)는 사람이 관련 있다고 본 글이라 키워드에서 떨어뜨리지 않고 Claude 판정으로 넘긴다
+    if (!verdict.pass && source.adapter !== 'manual') {
       await db.update(rawItems).set({ keywordHit: verdict.hit, llmStatus: 'skipped' }).where(eq(rawItems.id, item.id));
       result.skipped++;
       continue;
@@ -112,6 +113,13 @@ export async function processPendingItems(deps: PipelineDeps): Promise<ProcessRe
         });
         // 본문을 못 가져온 경우(회원 전용 카페 글은 제목·메뉴만 옴)는 LLM을 건너뛴다 (docs/naver.md 4)
         if (body.length < NAVER_MIN_PAGE) throw new SkipItem();
+      } else if (source.adapter === 'manual') {
+        // 제보 메모·메시지 + 링크 페이지 본문 (디스코드 메시지 링크는 로그인이 필요해 가져오지 않는다)
+        if (item.url && reportPageUrl(item.url) && body.length < SHORT_BODY) {
+          const page = await fetchPage(item.url).catch(() => undefined);
+          if (page) body = [body, page].filter(Boolean).join('\n\n');
+        }
+        if (!body.trim()) throw new SkipItem();
       } else if (item.url && body.length < SHORT_BODY && (source.adapter === 'html_diff' || source.adapter === 'rss')) {
         body = await fetchPage(item.url).catch(() => body);
       }
@@ -183,12 +191,24 @@ export async function processPendingItems(deps: PipelineDeps): Promise<ProcessRe
 
 class SkipItem extends Error {}
 
+/** 제보 링크 중 페이지를 가져올 수 있는 것 (http(s), 디스코드 메시지 링크 제외) */
+export function reportPageUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return (u.protocol === 'https:' || u.protocol === 'http:') && !/(^|\.)discord(app)?\.com$/.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
 export interface PipelineRunnerDeps extends PipelineDeps {
   notifier: Notifier;
-  /** true면 알림을 큐에만 쌓고 보내지 않는다 */
-  notifyPaused?: boolean;
+  /** true면 알림을 큐에만 쌓고 보내지 않는다 (환경 변수 또는 /관리 알림 일시정지) */
+  notifyPaused?: boolean | (() => Promise<boolean>);
   noticeChannelId?: string;
   bot?: () => DmSender | undefined;
+  /** 공지 채널 발송 (행사별 스레드·역할 멘션) */
+  deliverNotice?: SendDeps['deliverNotice'];
 }
 
 /** 1분마다: 원문 처리 → 시간 경과 상태 전이 → 리마인더 → 알림 발송 */
@@ -212,9 +232,10 @@ export function createPipelineRunner(deps: PipelineRunnerDeps) {
         queued += await planForChange(deps.db, event, { created: false, statusChanged: true });
       }
       queued += await planReminders(deps.db, now());
-      const sent = deps.notifyPaused
+      const paused = typeof deps.notifyPaused === 'function' ? await deps.notifyPaused() : !!deps.notifyPaused;
+      const sent = paused
         ? { sent: 0, failed: 0 }
-        : await sendQueued({ db: deps.db, notifier: deps.notifier, noticeChannelId: deps.noticeChannelId, bot: deps.bot?.(), now });
+        : await sendQueued({ db: deps.db, notifier: deps.notifier, noticeChannelId: deps.noticeChannelId, bot: deps.bot?.(), deliverNotice: deps.deliverNotice, now });
       return { processed, queued, sent };
     } finally {
       await releaseLock(deps.db, 'pipeline', owner);

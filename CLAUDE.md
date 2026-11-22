@@ -17,7 +17,7 @@
 | DB | SQLite. `@libsql/client` + `drizzle-orm/libsql`. `DATABASE_URL=file:/data/tracker.db` (Railway 볼륨). Turso로 옮길 때는 URL과 토큰만 교체 |
 | 수집 | `rss-parser`, `fetch` + `cheerio`, `playwright`(컨테이너 안 chromium, 스크립트로 그리는 페이지만), 예매처는 `ticket` 어댑터(멜론티켓은 서버 렌더링이라 fetch), `@the-convocation/twitter-scraper`(X), 인스타그램 Graph API Business Discovery, KOPIS 오픈API(XML 응답, `fast-xml-parser`), 네이버 검색 API(API HUB) |
 | LLM | `@anthropic-ai/sdk`. 기본 `claude-haiku-5-5`, 확신도가 낮을 때만 `claude-sonnet-5-5`. tool use로 JSON 스키마 강제 |
-| 알림 | discord.js v14 봇. 공지 채널, 관리자 경보 채널, DM, 슬래시 명령. 공지와 명령 응답은 Components V2 카드로 보내고, 디스코드가 카드를 형식 오류(400)로 거부하면 같은 메시지의 임베드로 보낸다. 관리자 채널 검수 카드(승인·무시 버튼), 국내 행사 서버 예약 이벤트, 매주 월요일 이번 주 요약, 봇 멘션 질문 답변도 봇이 맡는다. 봇이 준비 전이거나 발송에 실패하면 공지는 웹후크(`DISCORD_NOTICE_WEBHOOK_URL`, 선택)로 임베드를 보낸다. 관리자 경보는 웹후크로 보내지 않는다 |
+| 알림 | discord.js v14 봇. 공지 채널, 관리자 경보 채널, DM, 슬래시 명령. 공지와 명령 응답은 Components V2 카드로 보내고, 디스코드가 카드를 형식 오류(400)로 거부하면 같은 메시지의 임베드로 보낸다. 관리자 채널 검수 카드(승인·무시 버튼), 국내 행사 서버 예약 이벤트, 매주 월요일 이번 주 요약, 봇 멘션 질문 답변, 지역 알림 역할 구독(국내 기본), 행사별 공지 스레드, 개인 리마인더(DM), `/관리`·`/제보`·`/행사 검색`, 관리자 상태판도 봇이 맡는다. 봇이 준비 전이거나 발송에 실패하면 공지는 웹후크(`DISCORD_NOTICE_WEBHOOK_URL`, 선택)로 임베드를 보낸다. 관리자 경보는 웹후크로 보내지 않는다 |
 | 배포 | Railway Hobby, Docker 1개 (Playwright 공식 이미지 기반), 볼륨 `/data`. 헬스체크 경로 `/health`는 Railway 대시보드에서 설정한다(railway.json 같은 Config as Code는 Railway에서 폐기 예정이라 쓰지 않음) |
 | 개발 | NAS DevBox. 단 DevBox 컨테이너에는 chromium을 설치할 수 없으므로 Playwright 어댑터는 로컬 PC나 Railway에서 테스트 |
 
@@ -53,21 +53,27 @@ src/
     purge.ts            보관 기한(purge_after) 지난 원문 삭제 (파이프라인 틱에서 하루 1회, job lock 'purge_daily')
   notify/
     discord.ts          봇 클라이언트(로그인 재시도), 채널 발송(카드 → 거부 시 임베드), 슬래시 명령·버튼 처리, 봇 상태 메시지
-    commands.ts         슬래시 명령 정의와 응답 (/ping /소스 /최근수집 /행사 /점검)
+    commands.ts         슬래시 명령 정의와 응답 (/ping /소스 /최근수집 /행사 /점검 /가이드 /제보 /관리, 메시지 우클릭 '행사 제보')
+    interactions.ts     명령·자동완성·버튼·입력 창 처리 (index.ts가 봇에 연결)
+    subscriptions.ts    지역 알림 역할(국내·일본·해외) 생성, 공지 채널 구독 패널, 멤버 전원 국내 역할 기본 부여, 버튼 토글
+    noticeThreads.ts    공지 채널 발송: 새 행사는 역할 멘션 + 스레드, 상태 변경은 원래 카드 수정 + 스레드, 리마인더는 멘션 답장
+    watchers.ts         개인 리마인더(🔔 알림 받기) → DM 구독자(filters {"watch":true})
+    reports.ts          사용자 제보 → '사용자 제보' 소스(adapter manual) raw_items → 파이프라인, 결과를 관리자 카드·misses에
+    statusBoard.ts      관리자 채널 고정 상태판 (10분마다 수정)
     guide.ts            /가이드 응답 (수집 주기·미수집 소스는 sources 설정에서 계산)
     cards.ts            Components V2 카드: 공지(예매·원문·캘린더 버튼), /행사(8건씩 페이지), /소스·/최근수집·/점검 묶음 카드
     labels.ts           표시용 라벨·아이콘·지역 색·지역 이미지 주소
     review.ts           검수 대기 행사 카드(관리자 채널) + [승인]·[무시] 처리
     guildEvents.ts      국내 행사 → 디스코드 서버 예약 이벤트 생성·수정·삭제
     weekly.ts           매주 월요일 09:00 KST 이번 주 행사 요약
-    discordJobs.ts      봇 주기 작업: 검수 카드(1분), 서버 이벤트(10분), 주간 요약(월 09:00 KST, job lock 'weekly_digest')
+    discordJobs.ts      봇 주기 작업: 검수 카드·제보 결과(1분), 역할·구독 패널·기본 구독·상태판·서버 이벤트·권한 점검(10분, 봇 준비 직후 1회), 주간 요약(월 09:00 KST, job lock 'weekly_digest')
     notifier.ts         공지(봇 → 웹후크 순) · 관리자 경보(봇 → 콘솔, 30분 중복 억제)
     webhook.ts          공지 채널 웹후크 발송
     format.ts           2000자 자르기, KST 표시
     planner.ts          알림 임베드 생성, notifications 큐 적재, subscribers.filters 매칭, 기본 구독자(공지 채널)
     reminders.ts        ticket_open_at 기준 T-24h, T-1h
     sender.ts           큐 발송 (공지 채널은 봇 → 웹후크, 실패 시 3회까지 재시도)
-  services/             공용 조회 로직: status(상태), sources(/소스·/가이드), rawItems(/최근수집), events(/행사), diagnostics(/점검), qa(멘션 질문 답변). 추후 공개 웹도 여기를 쓴다
+  services/             공용 조회 로직: status(상태), sources(/소스·/가이드), rawItems(/최근수집), events(/행사·검색 상세), diagnostics(/점검), qa(멘션 질문 답변), admin(/관리 DB 작업), settings(discord_settings). 추후 공개 웹도 여기를 쓴다
   admin/                Express 라우트(/api/admin/*): 소스 상태, 키워드, 행사 검수, misses 기록
 web/                    관리 화면
 assets/                 공지 임베드 하단 지역 이미지(region-kr/jp/overseas.png, 800×400 투명 PNG). GitHub raw 주소로 참조
@@ -107,6 +113,9 @@ test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 
     - ticket_scheduled: 예매 일정 알림 + 리마인더 T-24h, T-1h (reason=reminder, slot 컬럼으로 구분)
     - ticket_scheduled, on_sale, cancelled로 바뀌면: 상태 변경 알림 (reason=status_change)
     - 구독자가 없으면 시작할 때 공지 채널(없으면 웹후크)을 기본 구독자로 만든다.
+    - 공지 채널 알림은 행사 지역의 알림 역할(국내·일본·해외 행사 알림)을 멘션한다. 국내 역할은 서버 멤버 전원에게 한 번 준다(기본 구독, `discord_members`에 기록해 스스로 끈 사람에게 다시 주지 않음). 일본·해외는 공지 채널 고정 패널 버튼으로 각자 켠다. 멤버 목록은 REST(List Guild Members)로 읽으므로 Developer Portal의 Server Members Intent가 켜져 있어야 한다(게이트웨이 인텐트에는 넣지 않음).
+    - 새 행사 공지에는 스레드를 연다(`event_discord.notice_message_id`, `notice_thread_id`). 상태 변경은 원래 카드를 지금 상태로 고치고 스레드에 쓴다(멘션 없음: 스레드 안 역할 멘션은 스레드에 들어온 사람에게만 확실히 감). 티켓 리마인더는 공지 채널에 역할 멘션 + 원래 카드 답장으로 보낸다. 봇이 없으면 웹후크(스레드·멘션 없음).
+    - 공지 카드의 🔔 알림 받기(`event_watchers`): 누른 사람에게 그 행사의 리마인더·상태 변경만 DM으로. DM이 막혀 있으면(50007) 다시 시도하지 않고 그 사람의 DM 구독을 멈춘다(다시 누르면 재개).
     - ongoing, ended: 알림 없음
     - 중복 발송은 notifications의 유일 제약으로 막는다.
     - 일정·장소 변경 알림은 알림 조건과 함께 나중에 정한다. 지금은 로그만 남긴다.
@@ -123,7 +132,10 @@ test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 
     - 키 오류·구독 안 함·요청 형식 오류처럼 재시도해도 같은 오류는 어댑터가 `AlertNowError`로 던지고, 러너가 첫 실패에서 바로 알린다(같은 문구는 30분 중복 억제).
 12. boost 주기: L2 소스에 연결된 행사의 start_date가 60일 이내이면 `boost_interval_min`을 쓴다.
 13. LLM 호출마다 `llm_calls`에 토큰 수와 비용을 기록한다. 100만 토큰당 단가: Haiku 5.5 입력 $0.10·출력 $0.50(10만 토큰 이하 프롬프트 기준), Sonnet 5.5 입력 $2·출력 $10. 단가는 `pipeline/extract.ts`의 PRICING에 있다.
-14. `seed/sources.json`에서 `enabled=false`이거나 `target="TODO"`인 소스는 스케줄러에 올리지 않는다.
+14. `seed/sources.json`에서 `enabled=false`이거나 `target="TODO"`인 소스는 스케줄러에 올리지 않는다. `/관리 소스 멈춤`은 `sources.paused`(시드가 덮어쓰지 않음)를 쓰고, `/관리 키워드 삭제`는 `keywords.disabled`를 쓴다. 재배포해도 유지된다.
+    - `/관리 합치기`는 흡수한 행사를 숨기고(needs_review=2) `merged_into`로 남긴 행사를 가리킨다. 병합 조회(`findExistingEvent`)는 merged_into를 따라가 새 출처도 남긴 행사에 붙인다.
+    - `/관리`는 서버 관리 권한(Manage Server)만 보이고 쓸 수 있다(명령 기본 권한 + 서버 쪽 확인). 검수 승인·무시 버튼도 같은 권한을 확인한다.
+    - 사용자 제보(`/제보`, 메시지 우클릭 '행사 제보')는 '사용자 제보' 소스(adapter `manual`, 스케줄러에 안 올림)의 raw_items로 넣고 키워드 판정을 건너뛰어 Claude 판정으로 보낸다. 같은 사람 1분 1건, 전체 하루 30건.
 15. KOPIS 어댑터는 `docs/kopis.md`를 따른다. 요점:
     - 조회 기간이 최대 31일이므로 31일 창으로 나눠 스캔한다.
     - `afterdate`로 증분 수집한다.
@@ -166,7 +178,7 @@ TZ=UTC
 2. 디스코드 봇: 로그인, 공지 채널 발송, 관리자 경보, `/ping`
 3. L1 + L3 어댑터: htmlDiff, rss, xCrawl, kopis, 예매처 4곳(playwright)
 4. 파이프라인: keywordFilter → extract → merge → state → planner → reminders
-5. 관리 화면: 소스 상태, needs_review 검수, misses 기록
+5. 관리 화면: 소스 상태, needs_review 검수, misses 기록 → 디스코드로 대체(`/소스`·`/점검`·상태판, 검수 카드, `/관리`, 제보 결과가 misses에 기록)
 6. L2·L4: instagram, 서브컬처 행사 사이트, naver
 7. 실데이터 검증: AGF 2026(12월 4~6일, 킨텍스)의 공개된 부스 배치도로 L2 부스 매칭 확인
 
@@ -204,4 +216,5 @@ TZ=UTC
 - 프로세카 한국 서버(운영사 뉴버스) 공식 계정, 매지컬플레이 공식 채널
 - NOL 티켓 검색 주소 (멜론·YES24는 확인 완료, 티켓링크는 자동화 차단으로 쓰지 않음. docs/ticket-sites.md)
 - KOPIS: https 동작 여부, 오류 응답 형식, `afterdate`와 기간 파라미터를 같이 쓸 때의 동작, `relates` 하위 요소 구조
-- 알림 조건(지역·유형·공식성 등급). 정해지기 전까지는 모든 확정 행사를 공지 채널로 보낸다.
+- 알림 조건 중 유형·공식성 등급. 지역은 알림 역할 구독으로 정했다(국내 기본, 일본·해외 선택). 공지 채널에는 모든 확정 행사가 올라가고 멘션만 지역 역할로 나뉜다.
+- 봇 권한(운영 확인 필요): 역할 관리(봇 역할이 알림 역할보다 위), 공개 스레드 만들기, 스레드에서 메시지 보내기, 메시지 고정, 이벤트 만들기. 부족하면 하루 한 번 관리자 경보.

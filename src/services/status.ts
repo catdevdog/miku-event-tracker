@@ -1,4 +1,4 @@
-import { desc, gte, sql } from 'drizzle-orm';
+import { desc, gte, sql, ne } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { jobRuns, sources } from '../db/schema.js';
 import { FAILURE_ALERT_THRESHOLD } from '../scheduler/runner.js';
@@ -14,8 +14,9 @@ export interface ServiceStatus {
 /** /health, /ping, 관리 화면이 같이 쓰는 상태 조회 */
 export async function getServiceStatus(db: Db): Promise<ServiceStatus> {
   const [counts] = await db
-    .select({ total: sql<number>`count(*)`, enabled: sql<number>`sum(${sources.enabled})` })
-    .from(sources);
+    .select({ total: sql<number>`count(*)`, enabled: sql<number>`sum(${sources.enabled} = 1 AND ${sources.paused} = 0)` })
+    .from(sources)
+    .where(ne(sources.adapter, 'manual'));
   const failing = await db
     .select({ name: sources.name })
     .from(sources)

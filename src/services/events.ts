@@ -56,3 +56,47 @@ export async function eventLinks(db: Db, rows: Pick<typeof events.$inferSelect, 
   for (const s of src) if (s.url && !links.has(s.eventId)) links.set(s.eventId, s.url);
   return links;
 }
+
+export interface EventDetail {
+  event: typeof events.$inferSelect;
+  /** 원문 링크 (네이버 검색 결과 제외, 최근 것부터) */
+  sources: { name: string; url: string }[];
+  /** 상태·필드 변경 이력 (최근 것부터) */
+  history: { at: string; from: string | null; to: string; fields: string[] }[];
+  parent?: { id: number; title: string };
+}
+
+/** /행사 검색 상세 */
+export async function getEventDetail(db: Db, id: number): Promise<EventDetail | null> {
+  const [event] = await db.select().from(events).where(eq(events.id, id));
+  if (!event) return null;
+  const srcRows = await db
+    .select({ name: sources.name, url: rawItems.url, adapter: sources.adapter })
+    .from(eventSources)
+    .innerJoin(rawItems, eq(rawItems.id, eventSources.rawItemId))
+    .innerJoin(sources, eq(sources.id, rawItems.sourceId))
+    .where(eq(eventSources.eventId, id))
+    .orderBy(desc(eventSources.createdAt));
+  const seen = new Set<string>();
+  const srcs = srcRows
+    .filter((r) => r.url && r.adapter !== 'naver' && !seen.has(r.url) && seen.add(r.url))
+    .map((r) => ({ name: r.name, url: r.url! }));
+  const log = await db.all<{ created_at: string; from_status: string | null; to_status: string; changed_fields: string | null }>(sql`
+    SELECT created_at, from_status, to_status, changed_fields FROM event_state_log WHERE event_id = ${id} ORDER BY id DESC LIMIT 6
+  `);
+  const history = log.map((l) => {
+    let fields: string[] = [];
+    try {
+      fields = Object.keys((JSON.parse(l.changed_fields ?? '{}') as Record<string, unknown>) ?? {}).filter((k) => k !== 'by');
+    } catch {
+      /* 형식이 다른 옛 기록 */
+    }
+    return { at: l.created_at, from: l.from_status, to: l.to_status, fields };
+  });
+  let parent: EventDetail['parent'];
+  if (event.parentEventId) {
+    const [p] = await db.select({ id: events.id, title: events.title }).from(events).where(eq(events.id, event.parentEventId));
+    if (p) parent = p;
+  }
+  return { event, sources: srcs, history, ...(parent ? { parent } : {}) };
+}

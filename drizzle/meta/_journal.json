@@ -22,6 +22,13 @@
       "when": 1795365853698,
       "tag": "0002_event_discord",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1795368253128,
+      "tag": "0003_discord_features",
+      "breakpoints": true
     }
   ]
 }

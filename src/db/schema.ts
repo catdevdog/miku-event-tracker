@@ -17,7 +17,7 @@ const now = sql`(datetime('now'))`;
 
 // CHECK 제약과 TS 타입이 같은 목록을 쓰도록 enum 값을 한곳에 둔다.
 export const LAYERS = ['L1', 'L2', 'L3', 'L4'] as const;
-export const ADAPTERS = ['rss', 'html_diff', 'playwright', 'x_crawl', 'instagram', 'kopis', 'naver', 'ticket'] as const;
+export const ADAPTERS = ['rss', 'html_diff', 'playwright', 'x_crawl', 'instagram', 'kopis', 'naver', 'ticket', 'manual'] as const;
 export const SOURCE_REGIONS = ['KR', 'JP', 'GLOBAL'] as const;
 export const JOB_STATUSES = ['running', 'ok', 'error', 'skipped'] as const;
 export const KEYWORD_HITS = ['strong', 'weak', 'none'] as const;
@@ -51,6 +51,7 @@ export const sources = sqliteTable(
     config: text('config').notNull().default('{}'),
     state: text('state').notNull().default('{}'),
     enabled: integer('enabled').notNull().default(1),
+    paused: integer('paused').notNull().default(0),
     lastRunAt: text('last_run_at'),
     lastSuccessAt: text('last_success_at'),
     consecutiveFailures: integer('consecutive_failures').notNull().default(0),
@@ -141,6 +142,7 @@ export const events = sqliteTable(
     summaryKo: text('summary_ko'),
     dedupKey: text('dedup_key').notNull().unique(),
     needsReview: integer('needs_review').notNull().default(0),
+    mergedInto: integer('merged_into').references((): AnySQLiteColumn => events.id),
     createdAt: text('created_at').notNull().default(now),
     updatedAt: text('updated_at').notNull().default(now),
   },
@@ -225,6 +227,8 @@ export const eventDiscord = sqliteTable('event_discord', {
   reviewedAt: text('reviewed_at'),
   guildEventId: text('guild_event_id'),
   guildEventHash: text('guild_event_hash'),
+  noticeMessageId: text('notice_message_id'),
+  noticeThreadId: text('notice_thread_id'),
   updatedAt: text('updated_at')
     .notNull()
     .default(sql`(datetime('now'))`),
@@ -266,6 +270,7 @@ export const keywords = sqliteTable(
     term: text('term').notNull().unique(),
     tier: text('tier', { enum: KEYWORD_TIERS }).notNull(),
     lang: text('lang'),
+    disabled: integer('disabled').notNull().default(0),
   },
   () => [check('keywords_tier_check', inList('tier', KEYWORD_TIERS))],
 );
@@ -290,6 +295,45 @@ export const misses = sqliteTable('misses', {
   caughtBySystem: integer('caught_by_system').notNull(),
   systemLagMin: integer('system_lag_min'),
   note: text('note'),
+});
+
+// 디스코드 봇 설정값: 알림 역할 ID, 구독 패널·상태판 메시지 ID, 알림 일시정지
+export const discordSettings = sqliteTable('discord_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: text('updated_at').notNull().default(now),
+});
+
+// 기본 구독(국내 알림 역할)을 한 번 준 서버 멤버. 스스로 해제한 사람에게 다시 주지 않기 위해 남긴다.
+export const discordMembers = sqliteTable('discord_members', {
+  userId: text('user_id').primaryKey(),
+  initializedAt: text('initialized_at').notNull(),
+});
+
+// 행사별 개인 리마인더(🔔 알림 받기)를 누른 사용자
+export const eventWatchers = sqliteTable(
+  'event_watchers',
+  {
+    eventId: integer('event_id')
+      .notNull()
+      .references(() => events.id),
+    userId: text('user_id').notNull(),
+    createdAt: text('created_at').notNull().default(now),
+  },
+  (t) => [primaryKey({ columns: [t.eventId, t.userId] })],
+);
+
+// 사용자 제보 (디스코드 메시지 우클릭·/제보). 원문은 raw_items(사용자 제보 소스)로 파이프라인에 들어간다.
+export const reports = sqliteTable('reports', {
+  id: integer('id').primaryKey(),
+  rawItemId: integer('raw_item_id').references(() => rawItems.id),
+  url: text('url'),
+  note: text('note'),
+  reporterId: text('reporter_id').notNull(),
+  adminMessageId: text('admin_message_id'),
+  result: text('result'),
+  resolvedAt: text('resolved_at'),
+  createdAt: text('created_at').notNull().default(now),
 });
 
 export type Source = typeof sources.$inferSelect;

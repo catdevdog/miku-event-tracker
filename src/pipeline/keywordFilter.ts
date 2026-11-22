@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { keywords } from '../db/schema.js';
 
@@ -49,7 +50,8 @@ export function judgeKeywords(text: string, set: KeywordSet, opts: { implicitCon
 }
 
 export async function loadKeywordSet(db: Db): Promise<KeywordSet> {
-  const rows = await db.select({ term: keywords.term, tier: keywords.tier }).from(keywords);
+  // /관리에서 삭제한 키워드(disabled=1)는 뺀다
+  const rows = await db.select({ term: keywords.term, tier: keywords.tier }).from(keywords).where(eq(keywords.disabled, 0));
   const set: KeywordSet = { strong: [], weak: [], context: [], exclude: [] };
   for (const r of rows) set[r.tier].push(r.term);
   return set;

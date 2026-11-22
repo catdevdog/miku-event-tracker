@@ -1,4 +1,4 @@
-import { asc } from 'drizzle-orm';
+import { asc, ne } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { sources } from '../db/schema.js';
 import { isSchedulable } from '../scheduler/due.js';
@@ -8,6 +8,8 @@ export interface SourceStatusRow {
   name: string;
   adapter: string;
   enabled: boolean;
+  /** /관리에서 멈춤 */
+  paused: boolean;
   lastRunAt: string | null;
   lastSuccessAt: string | null;
   consecutiveFailures: number;
@@ -29,7 +31,7 @@ export interface CollectionPlanRow {
 
 /** 소스별 수집 주기와 실제 수집 여부 (/가이드) */
 export async function listCollectionPlan(db: Db): Promise<CollectionPlanRow[]> {
-  const rows = await db.select().from(sources).orderBy(asc(sources.id));
+  const rows = await db.select().from(sources).where(ne(sources.adapter, 'manual')).orderBy(asc(sources.id));
   return rows.map((s) => ({
     name: s.name,
     adapter: s.adapter,
@@ -48,11 +50,13 @@ export async function listSourceStatuses(db: Db): Promise<SourceStatusRow[]> {
       name: sources.name,
       adapter: sources.adapter,
       enabled: sources.enabled,
+      paused: sources.paused,
       lastRunAt: sources.lastRunAt,
       lastSuccessAt: sources.lastSuccessAt,
       consecutiveFailures: sources.consecutiveFailures,
     })
     .from(sources)
+    .where(ne(sources.adapter, 'manual')) // 사용자 제보는 수집처가 아니다
     .orderBy(asc(sources.id));
-  return rows.map((r) => ({ ...r, enabled: r.enabled === 1, implemented: isImplementedAdapter(r.adapter) }));
+  return rows.map((r) => ({ ...r, enabled: r.enabled === 1, paused: r.paused === 1, implemented: isImplementedAdapter(r.adapter) }));
 }

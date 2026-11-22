@@ -9,16 +9,11 @@ import { createApp } from './app.js';
 import { startDiscordBot, type DiscordBot } from './notify/discord.js';
 import { createWebhookSender } from './notify/webhook.js';
 import { createNotifier, dedupAlerter } from './notify/notifier.js';
-import { buildDiagnosticsReply, buildEventsReply, buildPingReply, buildRecentReply, buildSourcesReply } from './notify/commands.js';
-import { buildGuideReply } from './notify/guide.js';
-import { getDiagnostics } from './services/diagnostics.js';
-import { getServiceStatus } from './services/status.js';
-import { listCollectionPlan, listSourceStatuses } from './services/sources.js';
-import { listRecentRawItems } from './services/rawItems.js';
-import { eventLinks, listUpcomingEvents, parseEventScope, type EventScope } from './services/events.js';
-import { EVENTS_PAGE_SIZE, parseEventsPageId } from './notify/cards.js';
-import { decideReview, parseReviewId } from './notify/review.js';
+import { listUpcomingEvents } from './services/events.js';
+import { isNotifyPaused } from './services/settings.js';
 import { createDiscordJobs } from './notify/discordJobs.js';
+import { createInteractionHandlers } from './notify/interactions.js';
+import { deliverNotice } from './notify/noticeThreads.js';
 import { createQaAnswerer } from './services/qa.js';
 import { createPipelineRunner } from './pipeline/index.js';
 import { createAnthropicExtractor } from './pipeline/extract.js';
@@ -58,48 +53,43 @@ scheduler.start();
 
 const qa = config.ANTHROPIC_API_KEY ? createQaAnswerer(db, config.ANTHROPIC_API_KEY) : undefined;
 
+// 디스코드 주기 작업: 검수 카드·제보 결과(1분), 알림 역할·구독 패널·기본 구독·상태판·서버 이벤트(10분), 이번 주 요약(월 09:00 KST)
+const discordJobs = createDiscordJobs({
+  db,
+  bot: () => bot,
+  notifier,
+  alerter,
+  adminChannelId: config.DISCORD_ADMIN_CHANNEL_ID,
+  noticeChannelId: config.DISCORD_NOTICE_CHANNEL_ID,
+  notifyPausedEnv: config.NOTIFY_PAUSED,
+});
+
 if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID) {
   // 봇 토큰은 점(.)으로 나뉜 세 부분이다. Client Secret(점 없음)을 잘못 넣은 경우를 미리 알린다.
   if (config.DISCORD_BOT_TOKEN.split('.').length !== 3) {
     console.warn('DISCORD_BOT_TOKEN이 봇 토큰 형식(점으로 나뉜 세 부분)이 아닙니다. Client Secret을 넣은 것은 아닌지 확인하세요.');
   }
-  /** /행사 한 페이지. 카드 버튼 링크(예매·원문)는 그 페이지 행사만 조회한다. */
-  const eventsPage = async (scope: EventScope, page: number) => {
-    const rows = await listUpcomingEvents(db, { scope, limit: 200 });
-    const p = Math.min(Math.max(0, page), Math.max(0, Math.ceil(rows.length / EVENTS_PAGE_SIZE) - 1));
-    const links = await eventLinks(db, rows.slice(p * EVENTS_PAGE_SIZE, (p + 1) * EVENTS_PAGE_SIZE));
-    return buildEventsReply(rows, scope, p, links);
-  };
+  const handlers = createInteractionHandlers({
+    db,
+    bot: () => bot,
+    notifier,
+    guildId: config.DISCORD_GUILD_ID,
+    noticeChannelId: config.DISCORD_NOTICE_CHANNEL_ID,
+    adminChannelId: config.DISCORD_ADMIN_CHANNEL_ID,
+    notifyPausedEnv: config.NOTIFY_PAUSED,
+    uptimeSec,
+    setupNow: async () => {
+      const r = await discordJobs.setup();
+      await discordJobs.statusBoard().catch(() => null);
+      return r;
+    },
+  });
 
   bot = startDiscordBot({
     token: config.DISCORD_BOT_TOKEN,
     appId: config.DISCORD_APP_ID,
     guildId: config.DISCORD_GUILD_ID,
-    onCommand: async (name, ctx) => {
-      switch (name) {
-        case 'ping':
-          return buildPingReply({ status: await getServiceStatus(db), wsPingMs: ctx.wsPingMs, uptimeSec: uptimeSec() });
-        case '소스':
-          return buildSourcesReply(await listSourceStatuses(db));
-        case '최근수집':
-          return buildRecentReply(await listRecentRawItems(db, 15));
-        case '행사':
-          return eventsPage(parseEventScope(ctx.getString('범위')), 0);
-        case '점검':
-          return buildDiagnosticsReply(await getDiagnostics(db));
-        case '가이드':
-          return buildGuideReply(await listCollectionPlan(db));
-        default:
-          return null;
-      }
-    },
-    onButton: async (customId, { userId }) => {
-      const page = parseEventsPageId(customId);
-      if (page) return eventsPage(parseEventScope(page.scope), page.page);
-      const review = parseReviewId(customId);
-      if (review) return (await decideReview(db, review.eventId, review.decision, userId))?.message ?? null;
-      return null;
-    },
+    ...handlers,
     onMention: async (question) => {
       if (!qa) return '질문 답변은 Claude API 키(ANTHROPIC_API_KEY)가 있어야 쓸 수 있어요. `/행사`로 목록을 볼 수 있어요.';
       return qa.answer(question);
@@ -128,13 +118,15 @@ const pipeline = createPipelineRunner({
   notifier,
   noticeChannelId: config.DISCORD_NOTICE_CHANNEL_ID,
   bot: () => bot,
-  notifyPaused: config.NOTIFY_PAUSED,
+  // 환경 변수 NOTIFY_PAUSED 또는 /관리 알림 일시정지
+  notifyPaused: () => isNotifyPaused(db, config.NOTIFY_PAUSED),
+  // 공지 채널: 새 행사는 지역 역할 멘션 + 스레드, 상태 변경은 원래 카드 수정 + 스레드
+  deliverNotice: (job) =>
+    deliverNotice({ db, notifier, noticeChannelId: config.DISCORD_NOTICE_CHANNEL_ID, bot: bot?.isReady() ? bot : undefined, log: console }, job),
 });
 if (config.NOTIFY_PAUSED) console.warn('NOTIFY_PAUSED: 알림을 큐에만 쌓고 보내지 않습니다.');
 pipeline.start();
 
-// 디스코드 주기 작업: 검수 카드(1분), 서버 예약 이벤트(10분), 이번 주 요약(월 09:00 KST)
-const discordJobs = createDiscordJobs({ db, bot: () => bot, notifier, alerter, adminChannelId: config.DISCORD_ADMIN_CHANNEL_ID });
 if (bot) discordJobs.start();
 
 const app = createApp({

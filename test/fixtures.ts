@@ -17,6 +17,7 @@ export function fakeSource(over: Partial<Source> = {}): Source {
     config: '{}',
     state: '{}',
     enabled: 1,
+    paused: 0,
     lastRunAt: null,
     lastSuccessAt: null,
     consecutiveFailures: 0,

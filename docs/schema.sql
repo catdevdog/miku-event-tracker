@@ -8,7 +8,7 @@ CREATE TABLE sources (
   id                   INTEGER PRIMARY KEY,
   name                 TEXT    NOT NULL UNIQUE,          -- 시드 기준 키
   layer                TEXT    NOT NULL CHECK (layer IN ('L1','L2','L3','L4')),
-  adapter              TEXT    NOT NULL CHECK (adapter IN ('rss','html_diff','playwright','x_crawl','instagram','kopis','naver','ticket')),
+  adapter              TEXT    NOT NULL CHECK (adapter IN ('rss','html_diff','playwright','x_crawl','instagram','kopis','naver','ticket','manual')),  -- manual: 사용자 제보(스케줄러에 올리지 않음)
   target               TEXT    NOT NULL,                 -- URL, X 핸들, 인스타 계정, 검색어
   region               TEXT    NOT NULL CHECK (region IN ('KR','JP','GLOBAL')),
   interval_min         INTEGER NOT NULL,                 -- 평시 주기
@@ -16,6 +16,7 @@ CREATE TABLE sources (
   config               TEXT    NOT NULL DEFAULT '{}' CHECK (json_valid(config)),  -- 셀렉터, 검색어 목록 등
   state                TEXT    NOT NULL DEFAULT '{}' CHECK (json_valid(state)),   -- since_id, etag, 페이지 해시
   enabled              INTEGER NOT NULL DEFAULT 1,
+  paused               INTEGER NOT NULL DEFAULT 0,        -- /관리에서 멈춤 (시드가 덮어쓰지 않음)
   last_run_at          TEXT,
   last_success_at      TEXT,
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
@@ -79,6 +80,7 @@ CREATE TABLE events (
   summary_ko      TEXT,
   dedup_key       TEXT    NOT NULL UNIQUE,               -- 정규화 행사명 + 시작일 + 장소
   needs_review    INTEGER NOT NULL DEFAULT 0,            -- 0 확정, 1 검수 대기(LLM 확신도 낮음), 2 검수에서 무시
+  merged_into     INTEGER REFERENCES events(id),         -- /관리 합치기로 흡수된 행사 → 남긴 행사 (새 출처도 그쪽으로)
   created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -117,6 +119,8 @@ CREATE TABLE event_discord (
   reviewed_at       TEXT,
   guild_event_id    TEXT,                                -- 디스코드 서버 예약 이벤트 ID
   guild_event_hash  TEXT,                                -- 마지막으로 반영한 제목·일정·장소 해시
+  notice_message_id TEXT,                                -- 공지 채널의 첫 공지 메시지 (상태가 바뀌면 이 카드를 고친다)
+  notice_thread_id  TEXT,                                -- 그 공지에 단 스레드 (상태 변경 소식을 여기에 쓴다)
   updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -154,7 +158,8 @@ CREATE TABLE keywords (
   id   INTEGER PRIMARY KEY,
   term TEXT NOT NULL UNIQUE,
   tier TEXT NOT NULL CHECK (tier IN ('strong','weak','context','exclude')),
-  lang TEXT
+  lang TEXT,
+  disabled INTEGER NOT NULL DEFAULT 0                    -- /관리에서 삭제한 키워드 (시드가 다시 켜지 않음)
 );
 
 -- LLM 호출 비용 추적
@@ -177,4 +182,38 @@ CREATE TABLE misses (
   caught_by_system   INTEGER NOT NULL,                   -- 0 또는 1
   system_lag_min     INTEGER,                            -- 시스템이 늦은 시간(분)
   note               TEXT
+);
+
+-- 디스코드 봇 설정값: 알림 역할 ID, 구독 패널·상태판 메시지 ID, 알림 일시정지
+CREATE TABLE discord_settings (
+  key        TEXT PRIMARY KEY NOT NULL,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 기본 구독(국내 알림 역할)을 한 번 준 서버 멤버. 스스로 해제한 사람에게 다시 주지 않는다.
+CREATE TABLE discord_members (
+  user_id        TEXT PRIMARY KEY NOT NULL,
+  initialized_at TEXT NOT NULL
+);
+
+-- 행사별 개인 리마인더(🔔 알림 받기)
+CREATE TABLE event_watchers (
+  event_id   INTEGER NOT NULL REFERENCES events(id),
+  user_id    TEXT    NOT NULL,
+  created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (event_id, user_id)
+);
+
+-- 사용자 제보. 원문은 raw_items(사용자 제보 소스, adapter='manual')로 파이프라인에 들어간다.
+CREATE TABLE reports (
+  id               INTEGER PRIMARY KEY,
+  raw_item_id      INTEGER REFERENCES raw_items(id),
+  url              TEXT,
+  note             TEXT,
+  reporter_id      TEXT NOT NULL,
+  admin_message_id TEXT,                                 -- 관리자 채널 제보 카드
+  result           TEXT,                                 -- 판정 결과 요약
+  resolved_at      TEXT,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );

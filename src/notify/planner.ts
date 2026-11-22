@@ -1,12 +1,13 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { eventSources, notifications, rawItems, sources, subscribers } from '../db/schema.js';
+import { eventSources, eventWatchers, notifications, rawItems, sources, subscribers } from '../db/schema.js';
 import type { EventRow } from '../pipeline/merge.js';
 import type { EventStatus } from '../pipeline/state.js';
 import type { OutgoingMessage } from './types.js';
 import { discordTime, formatKstShort, formatPeriodKo } from './format.js';
 import { KIND_KO, OFFICIALITY_KO, REGION_IMAGES, STATUS_KO } from './labels.js';
 import { noticeCard } from './cards.js';
+import { isWatchFilter } from './watchers.js';
 
 export type NotifyReason = 'new' | 'status_change' | 'reminder';
 
@@ -121,7 +122,13 @@ function matchesFilters(filtersJson: string, e: EventRow): boolean {
  */
 export async function planNotifications(db: Db, e: EventRow, reason: NotifyReason, slot = ''): Promise<number> {
   if (e.needsReview !== 0) return 0; // 1 검수 대기, 2 검수에서 무시
-  const subs = (await db.select().from(subscribers).where(eq(subscribers.active, 1))).filter((s) => matchesFilters(s.filters, e));
+  // 개인 리마인더(🔔) 구독자는 지켜보는 행사의 리마인더·상태 변경만 받는다
+  const watchers = new Set(
+    reason === 'new' ? [] : (await db.select({ userId: eventWatchers.userId }).from(eventWatchers).where(eq(eventWatchers.eventId, e.id))).map((w) => w.userId),
+  );
+  const subs = (await db.select().from(subscribers).where(eq(subscribers.active, 1))).filter((s) =>
+    isWatchFilter(s.filters) ? s.channel === 'discord_dm' && watchers.has(s.target) : matchesFilters(s.filters, e),
+  );
   if (subs.length === 0) return 0;
   const message = JSON.stringify(renderEventMessage(e, reason, slot, await eventSourceUrls(db, e.id)));
   let queued = 0;

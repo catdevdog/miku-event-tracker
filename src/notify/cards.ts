@@ -13,6 +13,7 @@ import type { EventScope } from '../services/events.js';
 import type { SourceStatusRow } from '../services/sources.js';
 import type { RecentRawItem } from '../services/rawItems.js';
 import type { Diagnostics, SourceFunnelRow } from '../services/diagnostics.js';
+import type { EventDetail } from '../services/events.js';
 import { discordTime, formatKstShort, formatPeriodKo } from './format.js';
 import { CARD_COLOR, DOT, KIND_KO, OFFICIALITY_KO, REGION_IMAGES, STATUS_ICON, STATUS_KO, regionMeta } from './labels.js';
 
@@ -141,6 +142,10 @@ export function noticeCard(
   if (sourceUrl) buttons.push(linkButton('📰 원문 보기', sourceUrl));
   const cal = calendarLink(e, titleUrl);
   if (cal) buttons.push(linkButton(cal.label, cal.url));
+  // 개인 리마인더 (봇으로 보낸 카드에서만 동작. 웹후크는 카드 대신 임베드라 버튼이 없다)
+  if (e.status !== 'ended' && e.status !== 'cancelled') {
+    buttons.push(new ButtonBuilder().setCustomId(`wt:${e.id}`).setLabel('🔔 알림 받기').setStyle(ButtonStyle.Secondary));
+  }
   if (buttons.length) c.addActionRowComponents((r) => r.setComponents(buttons));
 
   c.addTextDisplayComponents((t) => t.setContent(`-# ${STATUS_ICON[e.status] ?? '📢'} ${STATUS_KO[e.status] ?? e.status} · 미쿠 행사 알림`));
@@ -235,8 +240,9 @@ function groupedCard<T>(head: ReturnType<typeof header>, groups: Group<T>[]): Ca
   return out;
 }
 
-export function sourceState(r: Pick<SourceStatusRow, 'enabled' | 'implemented' | 'consecutiveFailures' | 'lastSuccessAt'>) {
+export function sourceState(r: Pick<SourceStatusRow, 'enabled' | 'implemented' | 'consecutiveFailures' | 'lastSuccessAt'> & { paused?: boolean }) {
   if (!r.enabled) return 'off' as const;
+  if (r.paused) return 'paused' as const;
   if (!r.implemented) return 'todo' as const;
   if (r.consecutiveFailures >= 3) return 'alert' as const;
   if (r.consecutiveFailures > 0) return 'fail' as const;
@@ -245,7 +251,7 @@ export function sourceState(r: Pick<SourceStatusRow, 'enabled' | 'implemented' |
 
 export function sourcesCard(rows: SourceStatusRow[]): Card {
   const by = (s: ReturnType<typeof sourceState>) => rows.filter((r) => sourceState(r) === s);
-  const active = rows.filter((r) => r.enabled && r.implemented).length;
+  const active = rows.filter((r) => r.enabled && !r.paused && r.implemented).length;
   const alerts = by('alert').length;
   const name = (r: SourceStatusRow) => `**${esc(shortName(r.name))}**`;
   return groupedCard(header('📡 수집처 상태', `실제 수집 ${active}/${rows.length}곳 · 경보 ${alerts}곳 · 한국 시간`), [
@@ -253,6 +259,7 @@ export function sourcesCard(rows: SourceStatusRow[]): Card {
     { key: 'fail', title: `${DOT.fail} 실패`, color: CARD_COLOR.fail, rows: by('fail'), line: (r) => `${DOT.fail} ${name(r)} · 연속 ${r.consecutiveFailures}회 · 마지막 성공 ${shortKst(r.lastSuccessAt)}` },
     { key: 'ok', title: `${DOT.ok} 정상`, color: CARD_COLOR.ok, rows: by('ok'), line: (r) => `${DOT.ok} ${name(r)} · ${shortKst(r.lastSuccessAt)}` },
     { key: 'wait', title: `${DOT.wait} 대기 (아직 성공 기록 없음)`, color: CARD_COLOR.wait, rows: by('wait'), line: (r) => `${DOT.wait} ${name(r)}` },
+    { key: 'paused', title: '⏸️ 멈춤 (/관리에서 멈춘 수집처)', color: CARD_COLOR.off, rows: by('paused'), line: (r) => `⏸️ ${name(r)}` },
     { key: 'todo', title: `${DOT.todo} 준비 중 (수집기 구현 전)`, color: CARD_COLOR.off, rows: by('todo'), line: (r) => `${DOT.todo} ${name(r)}` },
     { key: 'off', title: `${DOT.off} 꺼짐 (주소·요청 형식 미확인)`, color: CARD_COLOR.off, rows: by('off'), line: (r) => `${DOT.off} ${name(r)}` },
   ]);
@@ -331,4 +338,83 @@ export function diagnosticsCard(d: Diagnostics): Card {
     events.toJSON(),
     sources.toJSON(),
   ];
+}
+
+// ── /행사 검색 상세 ──────────────────────────────────────────
+
+const FIELD_KO: Record<string, string> = {
+  title: '제목', startDate: '일정', endDate: '일정', city: '장소', venue: '장소', ticketOpenAt: '티켓 오픈', ticketUrl: '예매 링크',
+  ticket_open_at: '티켓 오픈', ticket_url: '예매 링크', start_date: '일정', end_date: '일정', merged_from: '다른 행사 합침', filled: '빈 항목 보완',
+};
+
+/** 이력 한 줄: "11-22 23:05 · 발표 → 예매 예정 · 일정·장소" */
+export function historyLine(h: EventDetail['history'][number]): string {
+  const moved = h.from && h.from !== h.to ? `${STATUS_KO[h.from] ?? h.from} → ${STATUS_KO[h.to] ?? h.to}` : '';
+  const fields = [...new Set(h.fields.map((f) => FIELD_KO[f] ?? f))].join('·');
+  return [shortKst(h.at), moved || (h.from ? '' : STATUS_KO[h.to] ?? h.to), fields ? `${fields} 변경` : ''].filter(Boolean).join(' · ');
+}
+
+/** 행사 상세 카드: 기본 정보 + 출처 + 변경 이력 + 버튼(예매·캘린더·알림 받기·스레드) */
+export function eventDetailCard(d: EventDetail, opts: { threadUrl?: string } = {}): Card {
+  const e = d.event;
+  const region = regionMeta(e.region);
+  const ticketUrl = linkable(e.ticketUrl) ? e.ticketUrl : undefined;
+  const titleUrl = ticketUrl ?? d.sources.map((s) => s.url).find(linkable);
+  const place = [e.city, e.venue].filter(Boolean).join(' · ') || '미정';
+  const summary = (e.summaryKo ?? '').trim();
+  const info = [
+    `📅 **일정**　${formatPeriodKo(e.startDate, e.endDate)}`,
+    `📍 **장소**　${esc(place)}`,
+    e.ticketOpenAt ? `🎫 **티켓 오픈**　${formatKstShort(e.ticketOpenAt)} KST · ${discordTime(e.ticketOpenAt, 'R')}` : '🎫 **티켓 오픈**　미정',
+    ...(d.parent ? [`🏟️ **상위 행사**　${esc(d.parent.title)}`] : []),
+  ];
+  const c = new ContainerBuilder()
+    .setAccentColor(region.color)
+    .addTextDisplayComponents((t) =>
+      t.setContent(
+        `-# ${region.flag} ${region.label} · ${KIND_KO[e.kind] ?? e.kind} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}　·　${STATUS_ICON[e.status] ?? '📢'} ${STATUS_KO[e.status] ?? e.status}${e.needsReview === 1 ? ' · 검수 대기' : e.needsReview === 2 ? ' · 숨김' : ''}`,
+      ),
+    )
+    .addTextDisplayComponents((t) =>
+      t.setContent(
+        [`## ${titleUrl ? `[${esc(e.title)}](${mdUrl(titleUrl)})` : esc(e.title)}`, ...(summary ? [`> ${esc(summary).replace(/\n/g, '\n> ')}`] : [])].join('\n').slice(0, 1800),
+      ),
+    )
+    .addSeparatorComponents((s) => s.setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+    .addTextDisplayComponents((t) => t.setContent(info.join('\n')));
+  const srcLines = d.sources.slice(0, 5).map((s) => `- [${esc(shortName(s.name))}](${mdUrl(s.url)})`);
+  const histLines = d.history.slice(0, 5).map((h) => `- ${historyLine(h)}`);
+  if (srcLines.length || histLines.length) {
+    c.addSeparatorComponents((s) => s.setDivider(true).setSpacing(SeparatorSpacingSize.Small));
+    c.addTextDisplayComponents((t) =>
+      t.setContent(
+        [...(srcLines.length ? [`**📰 출처 ${d.sources.length}건**`, ...srcLines] : []), ...(histLines.length ? [`**🕓 변경 이력**`, ...histLines] : [])].join('\n').slice(0, 1500),
+      ),
+    );
+  }
+  const buttons: ButtonBuilder[] = [];
+  if (ticketUrl) buttons.push(linkButton('🎫 예매하기', ticketUrl));
+  const cal = calendarLink(e, titleUrl);
+  if (cal) buttons.push(linkButton('📅 캘린더', cal.url));
+  if (e.status !== 'ended' && e.status !== 'cancelled' && e.needsReview === 0) {
+    buttons.push(new ButtonBuilder().setCustomId(`wt:${e.id}`).setLabel('🔔 알림 받기').setStyle(ButtonStyle.Secondary));
+  }
+  if (opts.threadUrl) buttons.push(linkButton('💬 소식 스레드', opts.threadUrl));
+  if (buttons.length) c.addActionRowComponents((r) => r.setComponents(buttons));
+  c.addTextDisplayComponents((t) => t.setContent(`-# 행사 #${e.id} · 시각은 한국 시간`));
+  return [c.toJSON()];
+}
+
+/** 검색 결과 목록 (여러 건일 때). 고르면 상세를 보도록 안내 */
+export function searchResultsCard(query: string, rows: EventRow[], links: Map<number, string>): Card {
+  const out: Card = [header(`🔎 "${esc(query).slice(0, 40)}" 검색 결과`, `${rows.length}건 · 입력 중에 뜨는 목록에서 고르면 상세를 볼 수 있어요`)];
+  if (rows.length === 0) {
+    out.push(new ContainerBuilder().setAccentColor(CARD_COLOR.wait).addTextDisplayComponents((t) => t.setContent('찾는 행사가 없어요. 놓친 행사라면 `/제보`로 알려 주세요.')).toJSON());
+    return out;
+  }
+  for (const e of rows.slice(0, EVENTS_PAGE_SIZE)) {
+    const link = links.get(e.id);
+    out.push(eventBlock(e, linkable(link) ? link : undefined).toJSON());
+  }
+  return out;
 }

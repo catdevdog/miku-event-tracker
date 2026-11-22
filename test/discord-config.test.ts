@@ -30,7 +30,7 @@ describe('디스코드 설정', () => {
 
 describe('/ping', () => {
   it('명령 정의: ping, 소스, 최근수집, 행사', () => {
-    expect(commandDefinitions.map((c) => c.name)).toEqual(['ping', '소스', '최근수집', '행사', '점검', '가이드']);
+    expect(commandDefinitions.map((c) => c.name)).toEqual(['ping', '소스', '최근수집', '행사', '점검', '가이드', '제보', '행사 제보', '관리']);
     const scopeOpt = (commandDefinitions[3] as { options?: { choices?: { value: string }[] }[] }).options![0]!;
     expect(scopeOpt.choices!.map((c) => c.value)).toEqual(['domestic', 'japan', 'overseas', 'all']);
   });
@@ -67,9 +67,9 @@ describe('명령 응답 (임베드 + 고정폭 표)', async () => {
 
   it('/소스', () => {
     const m = buildSourcesReply([
-      { name: 'PR TIMES', adapter: 'rss', enabled: true, lastRunAt: null, lastSuccessAt: '2026-11-22T14:05:00.000Z', consecutiveFailures: 0, implemented: true },
-      { name: 'X @cfm_miku', adapter: 'x_crawl', enabled: true, lastRunAt: null, lastSuccessAt: null, consecutiveFailures: 3, implemented: true },
-      { name: 'NOL 티켓', adapter: 'ticket', enabled: false, lastRunAt: null, lastSuccessAt: null, consecutiveFailures: 0, implemented: true },
+      { name: 'PR TIMES', adapter: 'rss', enabled: true, paused: false, lastRunAt: null, lastSuccessAt: '2026-11-22T14:05:00.000Z', consecutiveFailures: 0, implemented: true },
+      { name: 'X @cfm_miku', adapter: 'x_crawl', enabled: true, paused: false, lastRunAt: null, lastSuccessAt: null, consecutiveFailures: 3, implemented: true },
+      { name: 'NOL 티켓', adapter: 'ticket', enabled: false, paused: false, lastRunAt: null, lastSuccessAt: null, consecutiveFailures: 0, implemented: true },
     ]);
     expect(desc(m)).toContain('정상  11-22 23:05  0     PR TIMES');
     expect(desc(m)).toContain('경보  -----------  3     X @cfm_miku');
@@ -83,7 +83,7 @@ describe('명령 응답 (임베드 + 고정폭 표)', async () => {
     expect(desc(r)).toContain('11-22 23:05  강  완료  멜론티켓 · 하츠네 미쿠 EXPO');
     const ev = buildEventsReply(
       [
-        { id: 1, title: 'HATSUNE MIKU EXPO 2027 KOREA', kind: 'concert', officiality: 'crypton', region: 'KR', city: '서울', venue: '올림픽홀', startDate: '2027-03-06', endDate: '2027-03-07', ticketOpenAt: '2026-12-01T11:00:00.000Z', ticketUrl: null, status: 'ticket_scheduled', parentEventId: null, summaryKo: null, dedupKey: 'k', needsReview: 0, createdAt: '', updatedAt: '' },
+        { id: 1, title: 'HATSUNE MIKU EXPO 2027 KOREA', kind: 'concert', officiality: 'crypton', region: 'KR', city: '서울', venue: '올림픽홀', startDate: '2027-03-06', endDate: '2027-03-07', ticketOpenAt: '2026-12-01T11:00:00.000Z', ticketUrl: null, status: 'ticket_scheduled', parentEventId: null, summaryKo: null, dedupKey: 'k', needsReview: 0, mergedInto: null, createdAt: '', updatedAt: '' },
       ],
       'domestic',
     );

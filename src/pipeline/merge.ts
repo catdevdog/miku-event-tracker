@@ -38,6 +38,20 @@ export function titleSimilarity(a: string, b: string): number {
  * 같은 시작일(또는 시작일 미정)·같은 지역의 행사 중 제목이 비슷한 것을 고른다.
  */
 export async function findExistingEvent(db: Db, ext: Extraction): Promise<EventRow | undefined> {
+  return followMerged(db, await findEventRow(db, ext));
+}
+
+/** /관리 합치기로 흡수된 행사(merged_into)면 남긴 행사로 바꾼다. 새 출처가 숨긴 행사에 붙지 않게 하기 위해서다. */
+export async function followMerged(db: Db, e: EventRow | undefined): Promise<EventRow | undefined> {
+  for (let i = 0; e?.mergedInto && i < 5; i++) {
+    const [next] = await db.select().from(events).where(eq(events.id, e.mergedInto)).limit(1);
+    if (!next) break;
+    e = next;
+  }
+  return e;
+}
+
+async function findEventRow(db: Db, ext: Extraction): Promise<EventRow | undefined> {
   const key = dedupKey(ext.title, ext.start_date, ext.venue);
   const [exact] = await db.select().from(events).where(eq(events.dedupKey, key)).limit(1);
   if (exact) return exact;

@@ -6,9 +6,9 @@ import { addMinutes, minutesBetween, toIso } from '../lib/time.js';
 export const BOOST_WINDOW_DAYS = 60;
 export const X_JITTER_MIN = 10;
 
-/** 등록하지 않는 소스: enabled=0 이거나 target이 TODO (CLAUDE.md 규칙 14) */
-export function isSchedulable(s: Pick<Source, 'enabled' | 'target'>): boolean {
-  return s.enabled === 1 && s.target !== 'TODO';
+/** 등록하지 않는 소스: enabled=0, target이 TODO (CLAUDE.md 규칙 14), /관리에서 멈춤(paused=1), 사용자 제보(manual) */
+export function isSchedulable(s: Pick<Source, 'enabled' | 'target'> & Partial<Pick<Source, 'paused' | 'adapter'>>): boolean {
+  return s.enabled === 1 && (s.paused ?? 0) === 0 && s.target !== 'TODO' && s.adapter !== 'manual';
 }
 
 /**
