@@ -9,10 +9,16 @@ import { createApp } from './app.js';
 import { startDiscordBot, type DiscordBot } from './notify/discord.js';
 import { createWebhookSender } from './notify/webhook.js';
 import { createNotifier, dedupAlerter } from './notify/notifier.js';
-import { buildPingReply } from './notify/commands.js';
+import { buildEventsReply, buildPingReply, buildRecentReply, buildSourcesReply } from './notify/commands.js';
 import { getServiceStatus } from './services/status.js';
+import { listSourceStatuses } from './services/sources.js';
+import { listRecentRawItems } from './services/rawItems.js';
+import { listUpcomingEvents, type EventRegion } from './services/events.js';
+import { createPipelineRunner } from './pipeline/index.js';
+import { createAnthropicExtractor } from './pipeline/extract.js';
+import { ensureDefaultSubscriber } from './notify/planner.js';
 
-// 부트스트랩: 마이그레이션 → 시드 → 스케줄러 → 디스코드 봇 → Express
+// 부트스트랩: 마이그레이션 → 시드 → 스케줄러 → 디스코드 봇 → 파이프라인 → Express
 loadDotEnvIfPresent();
 const config = loadConfig();
 const startedAt = new Date();
@@ -53,7 +59,20 @@ if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID
     token: config.DISCORD_BOT_TOKEN,
     appId: config.DISCORD_APP_ID,
     guildId: config.DISCORD_GUILD_ID,
-    onPing: async (wsPingMs) => buildPingReply({ status: await getServiceStatus(db), wsPingMs, uptimeSec: uptimeSec() }),
+    onCommand: async (name, ctx) => {
+      switch (name) {
+        case 'ping':
+          return buildPingReply({ status: await getServiceStatus(db), wsPingMs: ctx.wsPingMs, uptimeSec: uptimeSec() });
+        case '소스':
+          return buildSourcesReply(await listSourceStatuses(db));
+        case '최근수집':
+          return buildRecentReply(await listRecentRawItems(db, 15));
+        case '행사':
+          return buildEventsReply(await listUpcomingEvents(db, { region: (ctx.getString('지역') ?? undefined) as EventRegion | undefined }));
+        default:
+          return null;
+      }
+    },
     onReady: async () => {
       const commit = process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7);
       await notifier.alerter.alert(`서비스 시작${commit ? ` (커밋 ${commit})` : ''}`);
@@ -62,6 +81,21 @@ if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID
 } else {
   console.warn('DISCORD_BOT_TOKEN이 없어 디스코드 봇을 켜지 않습니다.');
 }
+
+// 파이프라인: 키워드 → Claude 추출 → 병합·상태 → 알림 큐 → 발송 (1분마다)
+await ensureDefaultSubscriber(db, { noticeChannelId: config.DISCORD_NOTICE_CHANNEL_ID, hasWebhook: !!config.DISCORD_NOTICE_WEBHOOK_URL });
+if (!config.ANTHROPIC_API_KEY) console.warn('ANTHROPIC_API_KEY가 없어 키워드 판정까지만 하고 추출은 하지 않습니다.');
+const pipeline = createPipelineRunner({
+  db,
+  extractor: config.ANTHROPIC_API_KEY ? createAnthropicExtractor(config.ANTHROPIC_API_KEY) : undefined,
+  alerter,
+  notifier,
+  noticeChannelId: config.DISCORD_NOTICE_CHANNEL_ID,
+  bot: () => bot,
+  notifyPaused: config.NOTIFY_PAUSED,
+});
+if (config.NOTIFY_PAUSED) console.warn('NOTIFY_PAUSED: 알림을 큐에만 쌓고 보내지 않습니다.');
+pipeline.start();
 
 const app = createApp({
   db,
@@ -79,6 +113,7 @@ async function shutdown(signal: string) {
   console.log(`${signal} 수신, 종료합니다`);
   setTimeout(() => process.exit(1), 10_000).unref();
   await scheduler.stop();
+  await pipeline.stop();
   await bot?.stop();
   server.close(() => {
     client.close();

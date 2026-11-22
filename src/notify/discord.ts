@@ -17,15 +17,21 @@ export interface DiscordBotOptions {
   token: string;
   appId: string;
   guildId: string;
-  /** /ping 응답 본문을 만든다 */
-  onPing: (wsPingMs: number) => Promise<string>;
+  /** 슬래시 명령 응답 본문을 만든다. 모르는 명령이면 null */
+  onCommand: (name: string, ctx: CommandContext) => Promise<string | null>;
   /** 처음 준비됐을 때 한 번 */
   onReady?: (tag: string) => void | Promise<void>;
   log?: Pick<Console, 'log' | 'warn' | 'error'>;
 }
 
+export interface CommandContext {
+  wsPingMs: number;
+  getString(option: string): string | null;
+}
+
 export interface DiscordBot extends ChannelSender {
   state(): BotState;
+  sendDm(userId: string, message: OutgoingMessage): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -75,10 +81,13 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
   client.on(Events.ShardResume, () => log.log('디스코드 게이트웨이 재연결'));
 
   async function handleCommand(interaction: ChatInputCommandInteraction) {
-    if (interaction.commandName === 'ping') {
-      const content = await opts.onPing(client.ws.ping);
-      await interaction.reply({ content: truncate(content), flags: MessageFlags.Ephemeral });
-    }
+    const content = await opts.onCommand(interaction.commandName, {
+      wsPingMs: client.ws.ping,
+      getString: (o) => interaction.options.getString(o),
+    });
+    if (content === null) return;
+    // 명령 응답은 친 사람에게만 보인다
+    await interaction.reply({ content: truncate(content), flags: MessageFlags.Ephemeral });
   }
 
   // 로그인 실패 시 재시도 간격(분). 토큰이 틀린 경우는 재시도하지 않는다.
@@ -124,6 +133,14 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
       const channel = await client.channels.fetch(channelId);
       if (!channel || !channel.isSendable()) throw new Error(`메시지를 보낼 수 없는 채널입니다: ${channelId}`);
       await channel.send({
+        content: message.content ? truncate(message.content) : undefined,
+        embeds: message.embeds,
+        allowedMentions: { parse: [] },
+      });
+    },
+    async sendDm(userId: string, message: OutgoingMessage) {
+      const user = await client.users.fetch(userId);
+      await user.send({
         content: message.content ? truncate(message.content) : undefined,
         embeds: message.embeds,
         allowedMentions: { parse: [] },

@@ -42,19 +42,22 @@ src/
     kopis.ts  xCrawl.ts
     instagram.ts  naver.ts   (6단계)
   pipeline/
-    keywordFilter.ts    keywords 테이블 기반 판정
-    extract.ts          Claude 판정·추출 (tool use)
-    merge.ts            dedup_key 생성, 병합, parent_event_id 연결
-    state.ts            상태 전이 + event_state_log
+    index.ts            1분마다: pending 원문 처리 → 시간 경과 상태 전이 → 리마인더 → 알림 발송 (job lock 'pipeline')
+    keywordFilter.ts    keywords 테이블 기반 판정 (NFKC·소문자·공백 무시)
+    pageText.ts         본문이 짧은 링크 항목·네이버 항목의 원문 페이지 텍스트
+    extract.ts          Claude 판정·추출 (tool use, strict 스키마 + zod 검증), 단가
+    merge.ts            dedup_key 생성, 병합(제목 유사도 보조), parent_event_id 연결, 시간 경과 상태 갱신
+    state.ts            상태 계산(앞으로만 진행) + event_state_log
   notify/
     discord.ts          봇 클라이언트(로그인 재시도), 채널 발송, 슬래시 명령 처리
     commands.ts         슬래시 명령 정의와 /ping 응답
     notifier.ts         공지(봇 → 웹후크 순) · 관리자 경보(봇 → 콘솔, 30분 중복 억제)
     webhook.ts          공지 채널 웹후크 발송
     format.ts           2000자 자르기, KST 표시
-    planner.ts          notifications 생성, subscribers.filters 매칭
+    planner.ts          알림 임베드 생성, notifications 큐 적재, subscribers.filters 매칭, 기본 구독자(공지 채널)
     reminders.ts        ticket_open_at 기준 T-24h, T-1h
-  services/             행사 조회 등 공용 로직 (디스코드 명령, 관리 화면, 추후 공개 웹이 같이 씀)
+    sender.ts           큐 발송 (공지 채널은 봇 → 웹후크, 실패 시 3회까지 재시도)
+  services/             공용 조회 로직: status(상태), sources(/소스), rawItems(/최근수집), events(/행사). 추후 멘션 질의·공개 웹도 여기를 쓴다
   admin/                Express 라우트(/api/admin/*): 소스 상태, 키워드, 행사 검수, misses 기록
 web/                    관리 화면
 drizzle/                마이그레이션 (npm run db:generate로 생성)
@@ -75,14 +78,20 @@ test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 
     - weak는 context와 같이 있을 때만 통과
     - exclude만 걸리고 strong이 없으면 버림
     - 통과하지 못한 글은 `llm_status='skipped'`
-3. LLM 출력은 tool use의 input_schema로 강제한다. 필드: `is_relevant, title, kind, officiality, region, city, venue, start_date, end_date, ticket_open_at, ticket_url, parent_event_hint, summary_ko, confidence`. enum 값은 schema.sql의 CHECK와 같게 맞춘다.
+3. LLM 출력은 tool use의 input_schema로 강제한다. 필드: `is_relevant, title, kind, officiality, region, city, venue, start_date, end_date, ticket_open_at, ticket_url, is_cancelled, sale_started, parent_event_hint, summary_ko, confidence`. enum 값은 schema.sql의 CHECK와 같게 맞춘다.
+    - `is_cancelled`(취소 공지)와 `sale_started`(판매 중 명시)는 상태 계산에 쓰려고 추가한 필드다.
+    - 본문이 500자 미만인 html_diff·rss 항목은 원문 페이지를 가져와 넘긴다.
+    - API 일시 오류(429·529·5xx)는 원문을 pending으로 두고 다음 틱에, 키·요청 오류(400·401·403·404)는 파이프라인을 멈추고 관리자 경보.
 4. confidence가 0.7 미만이면 Sonnet으로 다시 판정한다(0.7은 초기값, 운영하며 조정). 그래도 낮으면 `needs_review=1`로 두고 알림을 보내지 않는다.
 5. 병합 키: `dedup_key = normalize(title) + start_date + venue`. 키가 같으면 `event_sources`만 추가한다. 필드가 바뀌면 `event_state_log`에 changed_fields를 남긴다.
+    - 출처마다 제목 표기가 달라 키가 어긋나는 경우를 위해, 같은 지역·같은 시작일(또는 시작일 미정) 행사 중 제목 유사도(글자 2개 묶음 Jaccard)가 0.5 이상(장소가 같으면 0.3, 시작일 미정이면 0.6)인 행사에 합친다.
+    - 기존 행사의 제목은 바꾸지 않는다. 장소·일정·티켓 정보는 새 값이 있으면 덮어쓴다.
 6. 상태 전이: announced → ticket_scheduled → on_sale → ongoing → ended. cancelled는 어느 단계에서든 가능하다. 예매가 없는 팝업·카페·부스는 announced에서 바로 ongoing으로 간다.
 7. 알림 시점:
-    - announced: 새 행사 알림 (reason=new)
+    - 새 행사: reason=new (발견 시점 상태가 무엇이든. 단 이미 종료된 행사와 검수 대기 행사는 알리지 않음)
     - ticket_scheduled: 예매 일정 알림 + 리마인더 T-24h, T-1h (reason=reminder, slot 컬럼으로 구분)
-    - on_sale, cancelled: 상태 변경 알림
+    - ticket_scheduled, on_sale, cancelled로 바뀌면: 상태 변경 알림 (reason=status_change)
+    - 구독자가 없으면 시작할 때 공지 채널(없으면 웹후크)을 기본 구독자로 만든다.
     - ongoing, ended: 알림 없음
     - 중복 발송은 notifications의 유일 제약으로 막는다.
     - 일정·장소 변경 알림은 알림 조건과 함께 나중에 정한다. 지금은 로그만 남긴다.
@@ -95,7 +104,7 @@ test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 
     - 현재 구현은 게스트 → 쿠키 두 단계. Playwright 단계는 두 경로가 모두 막히는 경우가 생기면 추가한다.
 11. 어댑터가 연속 3회 실패하면(`consecutive_failures >= 3`) 관리자 경보 채널로 한 번 알리고, 회복하면 회복 알림을 보낸다. 쿠키 만료도 같은 경로로 알린다.
 12. boost 주기: L2 소스에 연결된 행사의 start_date가 60일 이내이면 `boost_interval_min`을 쓴다.
-13. LLM 호출마다 `llm_calls`에 토큰 수와 비용을 기록한다. Haiku 5.5 단가는 입력 100만 토큰당 $0.10, 출력 100만 토큰당 $0.50이다(10만 토큰 이하 프롬프트 기준).
+13. LLM 호출마다 `llm_calls`에 토큰 수와 비용을 기록한다. 100만 토큰당 단가: Haiku 5.5 입력 $0.10·출력 $0.50(10만 토큰 이하 프롬프트 기준), Sonnet 5.5 입력 $2·출력 $10. 단가는 `pipeline/extract.ts`의 PRICING에 있다.
 14. `seed/sources.json`에서 `enabled=false`이거나 `target="TODO"`인 소스는 스케줄러에 올리지 않는다.
 15. KOPIS 어댑터는 `docs/kopis.md`를 따른다. 요점:
     - 조회 기간이 최대 31일이므로 31일 창으로 나눠 스캔한다.
@@ -120,6 +129,7 @@ DISCORD_GUILD_ID=
 DISCORD_NOTICE_CHANNEL_ID=
 DISCORD_ADMIN_CHANNEL_ID=
 DISCORD_NOTICE_WEBHOOK_URL=       # 선택. 공지 채널 웹후크 (커밋 금지)
+NOTIFY_PAUSED=                    # 선택. 1이면 알림을 큐에만 쌓고 보내지 않음
 KOPIS_SERVICE_KEY=
 NAVER_CLIENT_ID=                  # NAVER API HUB Client ID → 헤더 X-NCP-APIGW-API-KEY-ID
 NAVER_CLIENT_SECRET=              # NAVER API HUB Client Secret → 헤더 X-NCP-APIGW-API-KEY

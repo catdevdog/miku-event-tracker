@@ -48,4 +48,11 @@ describe('loadConfig', () => {
     expect(loadConfig({ ...valid, CLAUDE_API_KEY: 'sk-ant-x' }).ANTHROPIC_API_KEY).toBe('sk-ant-x');
     expect(loadConfig({ ...valid, CLAUDE_API_KEY: 'a', ANTHROPIC_API_KEY: 'b' }).ANTHROPIC_API_KEY).toBe('b');
   });
+
+  it('NOTIFY_PAUSED는 1·true만 켠다', () => {
+    expect(loadConfig(valid).NOTIFY_PAUSED).toBe(false);
+    expect(loadConfig({ ...valid, NOTIFY_PAUSED: '1' }).NOTIFY_PAUSED).toBe(true);
+    expect(loadConfig({ ...valid, NOTIFY_PAUSED: 'TRUE' }).NOTIFY_PAUSED).toBe(true);
+    expect(loadConfig({ ...valid, NOTIFY_PAUSED: '0' }).NOTIFY_PAUSED).toBe(false);
+  });
 });

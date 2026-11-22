@@ -39,6 +39,8 @@ const schema = z.object({
   DISCORD_GUILD_ID: optionalString,
   DISCORD_NOTICE_CHANNEL_ID: optionalString,
   DISCORD_ADMIN_CHANNEL_ID: optionalString,
+  // 선택: 1/true면 알림 발송을 멈춘다(큐에는 쌓임). 첫 배포 때 밀린 알림을 확인하고 싶을 때 쓴다.
+  NOTIFY_PAUSED: z.preprocess((v) => cleanEnvValue(v), z.string().optional()).transform((v) => v === '1' || v?.toLowerCase() === 'true'),
   // 선택: 공지 채널 웹후크. 봇이 준비되지 않았거나 발송에 실패하면 공지를 이쪽으로 보낸다.
   DISCORD_NOTICE_WEBHOOK_URL: optionalString,
   KOPIS_SERVICE_KEY: optionalString,
