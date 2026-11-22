@@ -356,7 +356,7 @@
     "interval_min": 180,
     "config": {
       "site": "nol",
-      "todo": "검색·오픈 공지 요청 형식 미확인"
+      "todo": "tickets.interpark.com 검색이 nol.yanolja.com/ticket으로 넘어가며 검색어가 사라짐. 오픈 예정 목록은 링크·고정 클래스가 없어 보류 (2026-11-23 확인)"
     },
     "enabled": false
   },
@@ -364,14 +364,38 @@
     "name": "YES24 티켓",
     "layer": "L3",
     "adapter": "ticket",
-    "target": "https://ticket.yes24.com/",
+    "target": "https://ticket.yes24.com/Search",
     "region": "KR",
     "interval_min": 180,
     "config": {
       "site": "yes24",
-      "todo": "검색·오픈 공지 요청 형식 미확인"
+      "mode": "search",
+      "queries": [
+        "미쿠",
+        "하츠네",
+        "보컬로이드",
+        "프로젝트 세카이"
+      ]
     },
-    "enabled": false
+    "enabled": true
+  },
+  {
+    "name": "YES24 티켓 오픈 공지",
+    "layer": "L3",
+    "adapter": "ticket",
+    "target": "https://ticket.yes24.com/Notice?Gcode=009_208_002",
+    "region": "KR",
+    "interval_min": 180,
+    "config": {
+      "site": "yes24",
+      "mode": "open",
+      "queries": [
+        "미쿠",
+        "하츠네",
+        "보컬로이드",
+        "프로젝트 세카이"
+      ]
+    }
   },
   {
     "name": "티켓링크",
@@ -382,7 +406,7 @@
     "interval_min": 180,
     "config": {
       "site": "ticketlink",
-      "todo": "검색·오픈 공지 요청 형식 미확인"
+      "todo": "검색 결과는 서버가 그리지만 스크립트 기반 자동화 차단이 있어 수집하지 않음 (2026-11-23 확인)"
     },
     "enabled": false
   },

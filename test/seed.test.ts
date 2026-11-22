@@ -16,7 +16,7 @@ const count = async (table: typeof sources | typeof keywords) =>
 describe('seed', () => {
   it('시드 파일 내용이 CLAUDE.md 수치와 맞다', () => {
     const data = readSeedFiles();
-    expect(data.sources).toHaveLength(35);
+    expect(data.sources).toHaveLength(36);
     expect(data.keywords.strong).toHaveLength(22);
     expect(data.keywords.weak).toHaveLength(12);
     expect(data.keywords.context).toHaveLength(19);
@@ -25,10 +25,10 @@ describe('seed', () => {
 
   it('두 번 실행해도 행 수가 같다', async () => {
     const first = await seedDatabase(t.db);
-    expect(first).toEqual({ sourcesInserted: 35, sourcesUpdated: 0, keywordsUpserted: 55 });
+    expect(first).toEqual({ sourcesInserted: 36, sourcesUpdated: 0, keywordsUpserted: 55 });
     const second = await seedDatabase(t.db);
-    expect(second).toEqual({ sourcesInserted: 0, sourcesUpdated: 35, keywordsUpserted: 55 });
-    expect(await count(sources)).toBe(35);
+    expect(second).toEqual({ sourcesInserted: 0, sourcesUpdated: 36, keywordsUpserted: 55 });
+    expect(await count(sources)).toBe(36);
     expect(await count(keywords)).toBe(55);
   });
 
@@ -49,7 +49,7 @@ describe('seed', () => {
   it('enabled=false 소스는 0으로 들어간다', async () => {
     await seedDatabase(t.db);
     const disabled = await t.db.select({ name: sources.name }).from(sources).where(eq(sources.enabled, 0));
-    expect(disabled).toHaveLength(5);
+    expect(disabled).toHaveLength(4);
   });
 
   it('키워드 언어를 표기 문자로 추정한다', () => {

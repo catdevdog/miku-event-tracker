@@ -81,7 +81,8 @@ export async function processPendingItems(deps: PipelineDeps): Promise<ProcessRe
     const implicitContext = config.implicit_context ?? (source.adapter === 'kopis' || source.adapter === 'ticket');
     let verdict = judgeKeywords(`${item.title ?? ''}\n${item.body ?? ''}`, keywords, { implicitContext });
     let pageBody: string | undefined;
-    if (!verdict.pass && item.url && (item.body ?? '').length < SHORT_BODY && PAGE_RECHECK_ADAPTERS.has(source.adapter)) {
+    // 본문 비교·JSON 모드 항목은 출처 페이지 자체를 가리키므로 다시 가져와도 새 내용이 없다
+    if (!verdict.pass && item.url && item.url !== source.target && (item.body ?? '').length < SHORT_BODY && PAGE_RECHECK_ADAPTERS.has(source.adapter)) {
       const page = await fetchPage(item.url).catch(() => undefined);
       if (page) {
         const recheck = judgeKeywords(`${item.title ?? ''}\n${page}`, keywords, { implicitContext });

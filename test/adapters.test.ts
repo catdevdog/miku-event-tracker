@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createRssAdapter } from '../src/adapters/rss.js';
+import type { FetchText } from '../src/adapters/http.js';
 import { createHtmlDiffAdapter, extractLinks, extractTextBlocks, jsonBlocks } from '../src/adapters/htmlDiff.js';
-import { createTicketAdapter, parseKstDateTime, parseMelonSearch, parseMelonTicketOpen } from '../src/adapters/ticket.js';
+import { createTicketAdapter, parseKstDateTime, parseMelonSearch, parseMelonTicketOpen, parseYes24Search, parseYes24TicketOpen } from '../src/adapters/ticket.js';
 import { buildWindows, createKopisAdapter, kopisDetailBody, parseKopisDetail, parseKopisList } from '../src/adapters/kopis.js';
 import { createXCrawlAdapter, type TweetLike, type TweetSource } from '../src/adapters/xCrawl.js';
 import { readSeedFiles } from '../src/db/seed.js';
@@ -307,5 +308,42 @@ describe('html_diff json 모드 (AGF 공식 사이트 데이터)', () => {
       [/getBoardList/, board],
     ]);
     expect(await jsonBlocks(cfg.json, fetchText)).toEqual(['공지 · (필독) 프레스 참가 신청 안내 · 2026-06-25 15:32:22.500 · 프레스 ID 발급']);
+  });
+});
+
+describe('YES24 티켓', () => {
+  it('공연 검색 결과를 파싱한다 (제목에 미쿠가 없어도 출연진으로 걸린 공연)', () => {
+    expect(parseYes24Search(fixture('ticket/yes24-search.html'))).toEqual([
+      { perfId: '53366', title: 'PINOCCHIOP ASIA TOUR 「COMET」 in Seoul', period: '2025.05.10~2025.05.10', venue: '가빈아트홀', badges: ['단독판매', '판매마감'] },
+    ]);
+  });
+
+  it('티켓 오픈 공지를 파싱하고 오픈 시각을 UTC로 바꾼다 (시각이 비어 있으면 null)', () => {
+    expect(parseYes24TicketOpen(fixture('ticket/yes24-open.html'))).toEqual([
+      { noticeId: '14668', title: 'marasy Piano Live Asia Tour 2025 Prelive in Seoul 티켓 오픈 안내', openText: '2024.08.02(금) 10:00', openAt: '2024-08-02T01:00:00.000Z', badges: ['단독판매'] },
+      { noticeId: '18870', title: '2026-27 장민호 전국투어 콘서트 ‘호시절：호(好)캉스’ 투어 일정 안내', openText: '', openAt: null, badges: ['단독판매'] },
+    ]);
+  });
+
+  it('검색어마다 사이트와 같은 형식으로 POST하고, 이미 본 항목은 다시 내지 않는다', async () => {
+    const calls: { url: string; body?: string }[] = [];
+    const fetchText = (async (url: string, opts?: { body?: string }) => {
+      calls.push({ url, body: opts?.body });
+      return { status: 200, url, text: url.includes('axPerfList') ? fixture('ticket/yes24-search.html') : fixture('ticket/yes24-open.html') };
+    }) as unknown as FetchText;
+    const adapter = createTicketAdapter(fetchText, 0);
+    const search = await adapter.run(fakeSource({ adapter: 'ticket' }), { now: new Date(), state: {}, config: { site: 'yes24', mode: 'search', queries: ['미쿠', '하츠네'] } });
+    expect(calls.map((c) => c.url)).toEqual(['https://ticket.yes24.com/New/Search/Ajax/axPerfList.aspx', 'https://ticket.yes24.com/New/Search/Ajax/axPerfList.aspx']);
+    expect(Object.fromEntries(new URLSearchParams(calls[0]!.body))).toMatchObject({ SearchText: '미쿠', PerfCurPage: '1', SortType: '1' });
+    expect(search.items).toHaveLength(1);
+    expect(search.items[0]).toMatchObject({ url: 'https://ticket.yes24.com/Perf/53366', title: 'PINOCCHIOP ASIA TOUR 「COMET」 in Seoul' });
+    expect(search.items[0]!.body).toContain('예매처: YES24 티켓 https://ticket.yes24.com/Perf/53366');
+    const again = await adapter.run(fakeSource({ adapter: 'ticket' }), { now: new Date(), state: search.state!, config: { site: 'yes24', mode: 'search', queries: ['미쿠'] } });
+    expect(again.items).toHaveLength(0);
+
+    const open = await adapter.run(fakeSource({ adapter: 'ticket' }), { now: new Date(), state: {}, config: { site: 'yes24', mode: 'open', queries: ['미쿠'] } });
+    expect(calls.at(-1)!.url).toBe('https://ticket.yes24.com/New/Notice/Ajax/axList.aspx');
+    expect(Object.fromEntries(new URLSearchParams(calls.at(-1)!.body))).toMatchObject({ searchType: 'All', searchText: '미쿠', page: '1' });
+    expect(open.items[0]).toMatchObject({ url: 'https://ticket.yes24.com/Notice#id=14668', publishedAt: '2024-08-02T01:00:00.000Z' });
   });
 });

@@ -39,7 +39,7 @@ src/
     rss.ts              RSS 2.0·RSS 1.0(RDF)·Atom
     htmlDiff.ts         새 링크·새 문단·새 JSON 행(json 모드: 사이트가 부르는 데이터 주소) 감지, 연도별 페이지(404→200) 감지
     render.ts           Playwright 렌더링 (config.render=true인 소스만)
-    ticket.ts           예매처 (멜론티켓 검색·티켓오픈소식 구현, NOL·YES24·티켓링크 미구현)
+    ticket.ts           예매처 (멜론티켓·YES24 검색·티켓 오픈 소식 구현, 티켓링크는 자동화 차단으로 제외, NOL은 보류. docs/ticket-sites.md)
     kopis.ts  xCrawl.ts
     naver.ts            네이버 검색 (docs/naver.md). 뉴스·블로그·카페글 × 검색어, 본 글이 나올 때까지 페이지 넘김
     instagram.ts        (6단계)
@@ -76,7 +76,8 @@ scripts/schema-diff.ts  docs/schema.sql과 마이그레이션 구조 비교 (npm
 docs/schema.sql         DDL 정본 (SQLite 3.53에서 검증 완료)
 docs/kopis.md           KOPIS 어댑터 명세 (원문 PDF는 docs/kopis/)
 docs/naver.md           네이버 검색(NAVER API HUB) 어댑터 명세
-seed/sources.json       소스 35개 (enabled=false 5개: URL·계정 또는 요청 형식 미확인)
+docs/ticket-sites.md    예매처 요청 형식 (멜론·YES24 확인, 티켓링크·NOL 보류 사유)
+seed/sources.json       소스 36개 (enabled=false 4개: 계정 미확인 2, NOL 보류, 티켓링크 제외)
 seed/keywords.json      키워드 사전 (strong 22, weak 12, context 19, exclude 2)
 test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 수집, 일부는 명세 기반 예시라고 파일에 표시. kopis/, naver/는 명세 기반 예시)
 ```
@@ -92,7 +93,7 @@ test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 
 3. LLM 출력은 tool use의 input_schema로 강제한다. 필드: `is_relevant, title, kind, officiality, region, city, venue, start_date, end_date, ticket_open_at, ticket_url, is_cancelled, sale_started, parent_event_hint, summary_ko, confidence`. enum 값은 schema.sql의 CHECK와 같게 맞춘다.
     - `is_cancelled`(취소 공지)와 `sale_started`(판매 중 명시)는 상태 계산에 쓰려고 추가한 필드다.
     - 본문이 500자 미만인 html_diff·rss 항목은 원문 페이지를 가져와 넘긴다.
-    - 본문이 500자 미만인 html_diff·rss·ticket 항목이 키워드에서 떨어지면 원문 페이지로 한 번 더 판정한다. 행사 이름에 미쿠가 없고 출연진·타임테이블에만 있는 경우(예: 원더리벳 2026)를 잡기 위해서다.
+    - 본문이 500자 미만인 html_diff·rss·ticket 항목이 키워드에서 떨어지면 원문 페이지로 한 번 더 판정한다. 행사 이름에 미쿠가 없고 출연진·타임테이블에만 있는 경우(예: 원더리벳 2026)를 잡기 위해서다. 항목 주소가 출처 페이지 자체(본문 비교·JSON 모드)면 다시 가져오지 않는다.
     - API 일시 오류(429·529·5xx)는 원문을 pending으로 두고 다음 틱에, 키·요청 오류(400·401·403·404)는 파이프라인을 멈추고 관리자 경보.
 4. confidence가 0.7 미만이면 Sonnet으로 다시 판정한다(0.7은 초기값, 운영하며 조정). 그래도 낮으면 `needs_review=1`로 두고 알림을 보내지 않는다.
     - 검수 대기 행사는 관리자 채널에 카드로 올린다(`event_discord.review_message_id`로 한 번만). [승인]은 `needs_review=0` + 새 행사 알림, [무시]는 `needs_review=2`.
@@ -201,6 +202,6 @@ TZ=UTC
 - 인스타그램 대상 계정이 비즈니스·크리에이터 계정인지
 - 팝가 검색·목록 URL (AGF 공식 사이트는 www.agfkorea.com, 데이터 주소는 seed/sources.json에 기록)
 - 프로세카 한국 서버(운영사 뉴버스) 공식 계정, 매지컬플레이 공식 채널
-- NOL·YES24·티켓링크의 검색·티켓 오픈 공지 요청 형식 (멜론티켓은 확인 완료: 검색 GET, 오픈 소식 POST)
+- NOL 티켓 검색 주소 (멜론·YES24는 확인 완료, 티켓링크는 자동화 차단으로 쓰지 않음. docs/ticket-sites.md)
 - KOPIS: https 동작 여부, 오류 응답 형식, `afterdate`와 기간 파라미터를 같이 쓸 때의 동작, `relates` 하위 요소 구조
 - 알림 조건(지역·유형·공식성 등급). 정해지기 전까지는 모든 확정 행사를 공지 채널로 보낸다.
