@@ -149,7 +149,9 @@ export function createAnthropicExtractor(apiKey: string, client = new Anthropic(
   const send = (input: ExtractInput, model: string) =>
     client.messages.create({
       model,
-      max_tokens: 4096,
+      // 도구를 강제하면(Haiku) 생각 없이 바로 도구를 부른다. auto(Sonnet 5.5)는 기본으로 생각을 먼저 하고
+      // 그 토큰이 max_tokens에 들어가므로, 생각만 하다 도구 호출 전에 한도에 걸리지 않게 넉넉히 둔다(쓴 만큼만 과금).
+      max_tokens: autoChoiceModels.has(model) ? 16000 : 4096,
       system: systemPrompt(input.now),
       messages: [{ role: 'user', content: userPrompt(input) }],
       tools: [useStrict ? EXTRACT_TOOL : { ...EXTRACT_TOOL, strict: false }],

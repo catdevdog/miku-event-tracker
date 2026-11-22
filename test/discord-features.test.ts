@@ -10,7 +10,7 @@ import { decideReview, parseReviewId, postPendingReviews, reviewMessage } from '
 import { guildEventSpec, specHash, syncGuildEvents, type GuildEventApi } from '../src/notify/guildEvents.js';
 import { weekRangeKst, weeklyData, weeklyMessage } from '../src/notify/weekly.js';
 import { createDiscordJobs } from '../src/notify/discordJobs.js';
-import { createQaAnswerer, qaEvents, qaSystemPrompt } from '../src/services/qa.js';
+import { createQaAnswerer, qaDateRanges, qaEvents, qaSystemPrompt } from '../src/services/qa.js';
 import { listUpcomingEvents } from '../src/services/events.js';
 import type { Notifier } from '../src/notify/notifier.js';
 import { makeTestDb } from './helpers.js';
@@ -209,5 +209,33 @@ describe('멘션 질문 답변', () => {
     const [call] = await t.db.select().from(llmCalls).where(isNull(llmCalls.rawItemId));
     expect(call).toMatchObject({ model: 'claude-haiku-5-5', inputTokens: 800, outputTokens: 60 });
     expect(qaSystemPrompt(NOW)).toContain('지어내지 않는다');
+    // 생각(thinking)이 max_tokens를 다 써서 답이 비지 않게 끈다
+    expect(create.mock.calls[0]![0]).toMatchObject({ thinking: { type: 'disabled' } });
+  });
+
+  it('"다음 주" 같은 표현의 날짜 범위를 미리 계산해 넘긴다 (주는 월~일)', () => {
+    // 2026-11-23은 월요일
+    expect(qaDateRanges(NOW)).toMatchObject({
+      today: '2026-11-23',
+      weekday: '월',
+      thisWeek: ['2026-11-23', '2026-11-29'],
+      thisWeekend: ['2026-11-28', '2026-11-29'],
+      nextWeek: ['2026-11-30', '2026-12-06'],
+      thisMonth: ['2026-11-01', '2026-11-30'],
+      nextMonth: ['2026-12-01', '2026-12-31'],
+    });
+    // 일요일(한국 2026-11-29 10:00)은 그 주의 마지막 날, 12월이면 다음 달은 이듬해 1월
+    expect(qaDateRanges(new Date('2026-11-29T01:00:00Z')).nextWeek).toEqual(['2026-11-30', '2026-12-06']);
+    expect(qaDateRanges(new Date('2026-12-15T00:00:00Z')).nextMonth).toEqual(['2027-01-01', '2027-01-31']);
+    expect(qaSystemPrompt(NOW)).toContain('다음 주: 2026-11-30 ~ 2026-12-06');
+  });
+
+  it('답이 비면 안내 문구 (생각만 하다 한도에 걸린 경우)', async () => {
+    const create = vi.fn(async () => ({ content: [{ type: 'thinking', thinking: '', signature: 's' }], stop_reason: 'max_tokens', usage: { input_tokens: 800, output_tokens: 1500 } }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const qa = createQaAnswerer(t.db, 'k', { messages: { create } } as unknown as Anthropic, () => NOW);
+    expect(await qa.answer('다음 주 행사?')).toContain('답을 만들지 못했어요');
+    expect(warn.mock.calls[0]![0]).toContain('max_tokens');
+    warn.mockRestore();
   });
 });

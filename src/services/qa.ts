@@ -48,10 +48,42 @@ export function qaContext(rows: EventRow[]): string {
     .join('\n');
 }
 
+const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
+const addDays = (ymd: string, n: number) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * "이번 주", "다음 주" 같은 표현의 날짜 범위 (한국 날짜, 주는 월~일).
+ * 모델이 날짜 계산을 하지 않아도 되게 미리 계산해 넘긴다.
+ */
+export function qaDateRanges(now: Date) {
+  const today = kstDate(now);
+  const dow = new Date(`${today}T00:00:00Z`).getUTCDay(); // 0=일
+  const monday = addDays(today, dow === 0 ? -6 : 1 - dow);
+  const [y, m] = today.split('-').map(Number) as [number, number];
+  const monthEnd = (yy: number, mm: number) => new Date(Date.UTC(yy, mm, 0)).toISOString().slice(0, 10);
+  const ny = m === 12 ? y + 1 : y;
+  const nm = m === 12 ? 1 : m + 1;
+  return {
+    today,
+    weekday: WEEKDAY_KO[dow]!,
+    thisWeek: [monday, addDays(monday, 6)] as const,
+    thisWeekend: [addDays(monday, 5), addDays(monday, 6)] as const,
+    nextWeek: [addDays(monday, 7), addDays(monday, 13)] as const,
+    thisMonth: [`${today.slice(0, 7)}-01`, monthEnd(y, m)] as const,
+    nextMonth: [`${ny}-${String(nm).padStart(2, '0')}-01`, monthEnd(ny, nm)] as const,
+  };
+}
+
 export function qaSystemPrompt(now: Date): string {
+  const r = qaDateRanges(now);
+  const range = (a: readonly [string, string]) => `${a[0]} ~ ${a[1]}`;
   return [
     '너는 디스코드 서버의 하츠네 미쿠 행사 알림 봇이다. 사용자의 질문에 아래 [행사 목록]만 근거로 한국어로 답한다.',
-    `오늘은 ${kstDate(now)} (한국 시각)이다. "이번 달", "다음 주" 같은 표현은 이 날짜 기준으로 해석한다.`,
+    `오늘은 ${r.today} (${r.weekday}요일, 한국 시각)이다. 기간 표현은 아래 범위로 해석한다 (주는 월요일~일요일).`,
+    `- 이번 주: ${range(r.thisWeek)} / 이번 주말: ${range(r.thisWeekend)}`,
+    `- 다음 주: ${range(r.nextWeek)}`,
+    `- 이번 달: ${range(r.thisMonth)} / 다음 달: ${range(r.nextMonth)}`,
+    '- 행사 기간이 물어본 범위와 하루라도 겹치면 그 범위의 행사다. 티켓 오픈을 물으면 티켓 오픈 시각으로 판단한다.',
     '',
     '규칙:',
     '- 목록에 없는 행사·날짜·가격·장소는 지어내지 않는다. 모르면 "등록된 정보가 없어요"라고 말하고 /행사 명령이나 공식 공지를 확인하라고 안내한다.',
@@ -73,9 +105,13 @@ export function createQaAnswerer(db: Db, apiKey: string, client = new Anthropic(
     async answer(question) {
       const t = now();
       const context = qaContext(await qaEvents(db, t));
+      // Haiku 5.5는 기본으로 생각(adaptive thinking)을 하고 그 토큰이 max_tokens에 포함된다.
+      // 행사 목록이 길면 생각만 하다 한도에 걸려 답(text)이 비는 경우가 있어 생각을 끈다(기본 effort medium에서 허용).
+      // 날짜 범위는 시스템 프롬프트에서 미리 계산해 준다.
       const res = await client.messages.create({
         model: PRIMARY_MODEL,
-        max_tokens: 1024,
+        max_tokens: 1500,
+        thinking: { type: 'disabled' },
         system: qaSystemPrompt(t),
         messages: [{ role: 'user', content: `[행사 목록]\n${context}\n\n[질문]\n${question.slice(0, 500)}` }],
       });
@@ -92,7 +128,11 @@ export function createQaAnswerer(db: Db, apiKey: string, client = new Anthropic(
         .map((b) => b.text)
         .join('\n')
         .trim();
-      return text || '답을 만들지 못했어요. `/행사`로 목록을 확인해 주세요.';
+      if (!text) {
+        console.warn(`[멘션 질문] 답이 비었습니다 (stop_reason: ${res.stop_reason}, 출력 ${res.usage.output_tokens}토큰)`);
+        return '답을 만들지 못했어요. `/행사`로 목록을 확인해 주세요.';
+      }
+      return text;
     },
   };
 }
