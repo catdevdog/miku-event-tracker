@@ -6,7 +6,7 @@ PRAGMA foreign_keys = ON;
 -- 감시 대상 소스
 CREATE TABLE sources (
   id                   INTEGER PRIMARY KEY,
-  name                 TEXT    NOT NULL,
+  name                 TEXT    NOT NULL UNIQUE,          -- 시드 기준 키
   layer                TEXT    NOT NULL CHECK (layer IN ('L1','L2','L3','L4')),
   adapter              TEXT    NOT NULL CHECK (adapter IN ('rss','html_diff','playwright','x_crawl','instagram','kopis','naver')),
   target               TEXT    NOT NULL,                 -- URL, X 핸들, 인스타 계정, 검색어
@@ -36,7 +36,7 @@ CREATE INDEX idx_job_runs_source ON job_runs(source_id, started_at);
 
 -- 같은 작업의 중복 실행 방지
 CREATE TABLE job_locks (
-  name         TEXT PRIMARY KEY,
+  name         TEXT PRIMARY KEY NOT NULL,
   owner        TEXT NOT NULL,
   locked_until TEXT NOT NULL
 );

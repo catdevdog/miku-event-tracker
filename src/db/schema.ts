@@ -41,7 +41,7 @@ export const sources = sqliteTable(
   'sources',
   {
     id: integer('id').primaryKey(),
-    name: text('name').notNull(),
+    name: text('name').notNull().unique(),
     layer: text('layer', { enum: LAYERS }).notNull(),
     adapter: text('adapter', { enum: ADAPTERS }).notNull(),
     target: text('target').notNull(),

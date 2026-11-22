@@ -72,16 +72,10 @@ export async function seedDatabase(db: Db, data = readSeedFiles()): Promise<Seed
       config: JSON.stringify(s.config ?? {}),
       enabled: s.enabled === false ? 0 : 1,
     };
-    // docs/schema.sql의 sources.name에 UNIQUE가 없어 ON CONFLICT 대신 조회 후 갱신한다.
-    const existing = await db.select({ id: sources.id }).from(sources).where(eq(sources.name, s.name));
-    if (existing.length > 1) throw new Error(`sources에 같은 name이 여러 개 있습니다: ${s.name}`);
-    if (existing[0]) {
-      await db.update(sources).set(values).where(eq(sources.id, existing[0].id));
-      result.sourcesUpdated++;
-    } else {
-      await db.insert(sources).values(values);
-      result.sourcesInserted++;
-    }
+    const existed = (await db.select({ id: sources.id }).from(sources).where(eq(sources.name, s.name))).length > 0;
+    await db.insert(sources).values(values).onConflictDoUpdate({ target: sources.name, set: values });
+    if (existed) result.sourcesUpdated++;
+    else result.sourcesInserted++;
   }
 
   for (const tier of KEYWORD_TIERS) {

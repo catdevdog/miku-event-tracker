@@ -169,6 +169,7 @@ CREATE TABLE `sources` (
 	CONSTRAINT "sources_state_check" CHECK(json_valid(state))
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX `sources_name_unique` ON `sources` (`name`);--> statement-breakpoint
 CREATE TABLE `subscribers` (
 	`id` integer PRIMARY KEY NOT NULL,
 	`name` text NOT NULL,

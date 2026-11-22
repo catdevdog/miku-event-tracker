@@ -10,7 +10,7 @@
 
 | 영역 | 선택 |
 | --- | --- |
-| 런타임 | Node.js 24.17 이상 (discord.js 요구 사항), TypeScript, ESM. 로컬 개발은 Node 24, 배포 이미지(Playwright v1.65.1)는 Node 26 |
+| 런타임 | Node.js 24.17 이상, TypeScript, ESM. 로컬 개발은 Node 24, 배포 이미지(Playwright v1.65.1)는 Node 26 |
 | 서버 | Express. 관리 API와 관리 화면 정적 파일을 같은 프로세스에서 제공 |
 | 관리 화면 | React + Vite (`web/`) |
 | 스케줄러 | node-cron (프로세스 안). `job_locks` 테이블로 같은 작업의 중복 실행 방지 |

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8d6fbc2e-6c86-40f1-a6e0-5daf945cc2c7",
+  "id": "cad064f2-199a-41ce-8410-68e77393bd75",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "event_sources": {
@@ -1117,7 +1117,15 @@
           "default": "(datetime('now'))"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "sources_name_unique": {
+          "name": "sources_name_unique",
+          "columns": [
+            "name"
+          ],
+          "isUnique": true
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
