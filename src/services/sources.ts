@@ -11,6 +11,8 @@ export interface SourceStatusRow {
   lastRunAt: string | null;
   lastSuccessAt: string | null;
   consecutiveFailures: number;
+  /** 어댑터가 구현돼 실제로 수집하는지 */
+  implemented: boolean;
 }
 
 export interface CollectionPlanRow {
@@ -52,5 +54,5 @@ export async function listSourceStatuses(db: Db): Promise<SourceStatusRow[]> {
     })
     .from(sources)
     .orderBy(asc(sources.id));
-  return rows.map((r) => ({ ...r, enabled: r.enabled === 1 }));
+  return rows.map((r) => ({ ...r, enabled: r.enabled === 1, implemented: isImplementedAdapter(r.adapter) }));
 }

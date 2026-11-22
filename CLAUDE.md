@@ -17,7 +17,7 @@
 | DB | SQLite. `@libsql/client` + `drizzle-orm/libsql`. `DATABASE_URL=file:/data/tracker.db` (Railway 볼륨). Turso로 옮길 때는 URL과 토큰만 교체 |
 | 수집 | `rss-parser`, `fetch` + `cheerio`, `playwright`(컨테이너 안 chromium, 스크립트로 그리는 페이지만), 예매처는 `ticket` 어댑터(멜론티켓은 서버 렌더링이라 fetch), `@the-convocation/twitter-scraper`(X), 인스타그램 Graph API Business Discovery, KOPIS 오픈API(XML 응답, `fast-xml-parser`), 네이버 검색 API(API HUB) |
 | LLM | `@anthropic-ai/sdk`. 기본 `claude-haiku-5-5`, 확신도가 낮을 때만 `claude-sonnet-5-5`. tool use로 JSON 스키마 강제 |
-| 알림 | discord.js v14 봇. 공지 채널, 관리자 경보 채널, DM, 슬래시 명령. 봇이 준비 전이거나 발송에 실패하면 공지는 웹후크(`DISCORD_NOTICE_WEBHOOK_URL`, 선택)로 보낸다. 관리자 경보는 웹후크로 보내지 않는다 |
+| 알림 | discord.js v14 봇. 공지 채널, 관리자 경보 채널, DM, 슬래시 명령. 공지와 명령 응답은 Components V2 카드로 보내고, 디스코드가 카드를 형식 오류(400)로 거부하면 같은 메시지의 임베드로 보낸다. 봇이 준비 전이거나 발송에 실패하면 공지는 웹후크(`DISCORD_NOTICE_WEBHOOK_URL`, 선택)로 임베드를 보낸다. 관리자 경보는 웹후크로 보내지 않는다 |
 | 배포 | Railway Hobby, Docker 1개 (Playwright 공식 이미지 기반), 볼륨 `/data`. 헬스체크 경로 `/health`는 Railway 대시보드에서 설정한다(railway.json 같은 Config as Code는 Railway에서 폐기 예정이라 쓰지 않음) |
 | 개발 | NAS DevBox. 단 DevBox 컨테이너에는 chromium을 설치할 수 없으므로 Playwright 어댑터는 로컬 PC나 Railway에서 테스트 |
 
@@ -50,9 +50,11 @@ src/
     merge.ts            dedup_key 생성, 병합(제목 유사도 보조), parent_event_id 연결, 시간 경과 상태 갱신
     state.ts            상태 계산(앞으로만 진행) + event_state_log
   notify/
-    discord.ts          봇 클라이언트(로그인 재시도), 채널 발송, 슬래시 명령 처리
+    discord.ts          봇 클라이언트(로그인 재시도), 채널 발송(카드 → 거부 시 임베드), 슬래시 명령·버튼 처리, 봇 상태 메시지
     commands.ts         슬래시 명령 정의와 응답 (/ping /소스 /최근수집 /행사 /점검)
     guide.ts            /가이드 응답 (수집 주기·미수집 소스는 sources 설정에서 계산)
+    cards.ts            Components V2 카드: 공지(예매·원문·캘린더 버튼), /행사(8건씩 페이지), /소스·/최근수집·/점검 묶음 카드
+    labels.ts           표시용 라벨·아이콘·지역 색·지역 이미지 주소
     notifier.ts         공지(봇 → 웹후크 순) · 관리자 경보(봇 → 콘솔, 30분 중복 억제)
     webhook.ts          공지 채널 웹후크 발송
     format.ts           2000자 자르기, KST 표시
@@ -84,6 +86,7 @@ test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 
 3. LLM 출력은 tool use의 input_schema로 강제한다. 필드: `is_relevant, title, kind, officiality, region, city, venue, start_date, end_date, ticket_open_at, ticket_url, is_cancelled, sale_started, parent_event_hint, summary_ko, confidence`. enum 값은 schema.sql의 CHECK와 같게 맞춘다.
     - `is_cancelled`(취소 공지)와 `sale_started`(판매 중 명시)는 상태 계산에 쓰려고 추가한 필드다.
     - 본문이 500자 미만인 html_diff·rss 항목은 원문 페이지를 가져와 넘긴다.
+    - 본문이 500자 미만인 html_diff·rss·ticket 항목이 키워드에서 떨어지면 원문 페이지로 한 번 더 판정한다. 행사 이름에 미쿠가 없고 출연진·타임테이블에만 있는 경우(예: 원더리벳 2026)를 잡기 위해서다.
     - API 일시 오류(429·529·5xx)는 원문을 pending으로 두고 다음 틱에, 키·요청 오류(400·401·403·404)는 파이프라인을 멈추고 관리자 경보.
 4. confidence가 0.7 미만이면 Sonnet으로 다시 판정한다(0.7은 초기값, 운영하며 조정). 그래도 낮으면 `needs_review=1`로 두고 알림을 보내지 않는다.
 5. 병합 키: `dedup_key = normalize(title) + start_date + venue`. 키가 같으면 `event_sources`만 추가한다. 필드가 바뀌면 `event_state_log`에 changed_fields를 남긴다.

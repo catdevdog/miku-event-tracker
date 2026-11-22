@@ -15,7 +15,8 @@ import { getDiagnostics } from './services/diagnostics.js';
 import { getServiceStatus } from './services/status.js';
 import { listCollectionPlan, listSourceStatuses } from './services/sources.js';
 import { listRecentRawItems } from './services/rawItems.js';
-import { listUpcomingEvents, parseEventScope } from './services/events.js';
+import { eventLinks, listUpcomingEvents, parseEventScope, type EventScope } from './services/events.js';
+import { EVENTS_PAGE_SIZE, parseEventsPageId } from './notify/cards.js';
 import { createPipelineRunner } from './pipeline/index.js';
 import { createAnthropicExtractor } from './pipeline/extract.js';
 import { ensureDefaultSubscriber } from './notify/planner.js';
@@ -57,6 +58,14 @@ if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID
   if (config.DISCORD_BOT_TOKEN.split('.').length !== 3) {
     console.warn('DISCORD_BOT_TOKEN이 봇 토큰 형식(점으로 나뉜 세 부분)이 아닙니다. Client Secret을 넣은 것은 아닌지 확인하세요.');
   }
+  /** /행사 한 페이지. 카드 버튼 링크(예매·원문)는 그 페이지 행사만 조회한다. */
+  const eventsPage = async (scope: EventScope, page: number) => {
+    const rows = await listUpcomingEvents(db, { scope, limit: 200 });
+    const p = Math.min(Math.max(0, page), Math.max(0, Math.ceil(rows.length / EVENTS_PAGE_SIZE) - 1));
+    const links = await eventLinks(db, rows.slice(p * EVENTS_PAGE_SIZE, (p + 1) * EVENTS_PAGE_SIZE));
+    return buildEventsReply(rows, scope, p, links);
+  };
+
   bot = startDiscordBot({
     token: config.DISCORD_BOT_TOKEN,
     appId: config.DISCORD_APP_ID,
@@ -69,10 +78,8 @@ if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID
           return buildSourcesReply(await listSourceStatuses(db));
         case '최근수집':
           return buildRecentReply(await listRecentRawItems(db, 15));
-        case '행사': {
-          const scope = parseEventScope(ctx.getString('범위'));
-          return buildEventsReply(await listUpcomingEvents(db, { scope }), scope);
-        }
+        case '행사':
+          return eventsPage(parseEventScope(ctx.getString('범위')), 0);
         case '점검':
           return buildDiagnosticsReply(await getDiagnostics(db));
         case '가이드':
@@ -80,6 +87,15 @@ if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID
         default:
           return null;
       }
+    },
+    onButton: async (customId) => {
+      const page = parseEventsPageId(customId);
+      return page ? eventsPage(parseEventScope(page.scope), page.page) : null;
+    },
+    presence: async () => {
+      const all = await listUpcomingEvents(db, { limit: 1000 });
+      const kr = all.filter((e) => e.region === 'KR').length;
+      return `🎤 다가오는 미쿠 행사 ${all.length}건 (국내 ${kr}) · /가이드`;
     },
     onReady: async () => {
       const commit = process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7);

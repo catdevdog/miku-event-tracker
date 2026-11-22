@@ -1,6 +1,6 @@
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { events, EVENT_REGIONS } from '../db/schema.js';
+import { events, eventSources, EVENT_REGIONS, rawItems, sources } from '../db/schema.js';
 
 export type EventRegion = (typeof EVENT_REGIONS)[number];
 
@@ -32,4 +32,27 @@ export async function listUpcomingEvents(db: Db, opts: { scope?: EventScope; lim
     )
     .orderBy(sql`${events.startDate} IS NULL`, asc(events.startDate), asc(events.id))
     .limit(opts.limit ?? 25);
+}
+
+/**
+ * 행사별 대표 링크: 예매 URL, 없으면 가장 최근 원문 URL. 네이버 검색 결과 링크는 쓰지 않는다(약관).
+ * /행사 카드의 버튼에 쓴다.
+ */
+export async function eventLinks(db: Db, rows: Pick<typeof events.$inferSelect, 'id' | 'ticketUrl'>[]): Promise<Map<number, string>> {
+  const links = new Map<number, string>();
+  const need: number[] = [];
+  for (const r of rows) {
+    if (r.ticketUrl) links.set(r.id, r.ticketUrl);
+    else need.push(r.id);
+  }
+  if (need.length === 0) return links;
+  const src = await db
+    .select({ eventId: eventSources.eventId, url: rawItems.url })
+    .from(eventSources)
+    .innerJoin(rawItems, eq(rawItems.id, eventSources.rawItemId))
+    .innerJoin(sources, eq(sources.id, rawItems.sourceId))
+    .where(and(inArray(eventSources.eventId, need), ne(sources.adapter, 'naver')))
+    .orderBy(desc(eventSources.createdAt));
+  for (const s of src) if (s.url && !links.has(s.eventId)) links.set(s.eventId, s.url);
+  return links;
 }

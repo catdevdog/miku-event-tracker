@@ -186,6 +186,7 @@ describe('알림 (규칙 7)', () => {
       { name: '출처', value: '[x.com](https://x.com/cfm_miku/status/1)', inline: true },
     ]);
     expect(embed.image?.url).toBe('https://raw.githubusercontent.com/catdevdog/miku-event-tracker/main/assets/region-kr.png');
+    expect(msg.card).toHaveLength(1);
     const jp = renderEventMessage({ ...m.event, region: 'JP' }, 'new').embeds![0] as { image?: { url: string } };
     expect(jp.image?.url).toMatch(/\/assets\/region-jp\.png$/);
     const other = renderEventMessage({ ...m.event, region: 'OTHER' }, 'new').embeds![0] as { image?: { url: string } };
@@ -280,6 +281,33 @@ describe('processPendingItems', () => {
     await processPendingItems({ db: t.db, extractor: ex, alerter, now: () => NOW, fetchPage });
     expect(fetchPage).toHaveBeenCalledWith('https://mikuexpo.com/korea2027/');
     expect(ex.calls[0]!.input.body).toContain('올림픽홀');
+  });
+
+  it('짧은 링크 항목이 키워드에서 떨어지면 원문 페이지로 다시 판정한다 (출연진에만 미쿠가 있는 행사)', async () => {
+    await rawItem('팝가 (팝업 모음)', { title: '원더리벳 2026 | 라인업·타임테이블·티켓 가격', body: '', url: 'https://popga.co.kr/content/magazine/527' });
+    const page = '원더리벳 2026 킨텍스 제2전시장 DAY 2 12:00 양치기소년단 13:00 WONDER STAGE TAK with 하츠네 미쿠 & 카사네 테토';
+    const fetchPage = vi.fn(async () => page);
+    const ex = fakeExtractor({
+      'claude-haiku-5-5': ext({ title: 'TAK with 하츠네 미쿠 & 카사네 테토', kind: 'stage', officiality: 'licensed', city: '고양', venue: '킨텍스 제2전시장', start_date: '2026-11-21', end_date: '2026-11-21', parent_event_hint: '원더리벳 2026' }),
+    });
+    const r = await processPendingItems({ db: t.db, extractor: ex, alerter, now: () => NOW, fetchPage });
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(ex.calls[0]!.input.body).toBe(page);
+    expect(r.merged).toBe(1);
+    const [item] = await t.db.select().from(rawItems);
+    expect(item).toMatchObject({ keywordHit: 'strong', llmStatus: 'done' });
+    expect((await t.db.select().from(events))[0]).toMatchObject({ kind: 'stage', venue: '킨텍스 제2전시장' });
+  });
+
+  it('원문 페이지에도 키워드가 없으면 그대로 버리고, X·KOPIS는 페이지를 가져오지 않는다', async () => {
+    await rawItem('팝가 (팝업 모음)', { title: '코난 팝업 오픈', body: '', url: 'https://popga.co.kr/popup/1' });
+    await rawItem('X @cfm_miku', { title: '新しいソフトウェア発売', body: 'Voice Drive', url: 'https://x.com/cfm_miku/status/1' });
+    const fetchPage = vi.fn(async () => '명탐정 코난 팝업 홍대');
+    const ex = fakeExtractor({ 'claude-haiku-5-5': ext() });
+    const r = await processPendingItems({ db: t.db, extractor: ex, alerter, now: () => NOW, fetchPage });
+    expect(r.skipped).toBe(2);
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(ex.calls).toHaveLength(0);
   });
 
   it('API 키가 없으면 키워드 판정만 하고 pending으로 둔다', async () => {

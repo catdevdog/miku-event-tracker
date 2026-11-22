@@ -67,9 +67,9 @@ describe('명령 응답 (임베드 + 고정폭 표)', async () => {
 
   it('/소스', () => {
     const m = buildSourcesReply([
-      { name: 'PR TIMES', adapter: 'rss', enabled: true, lastRunAt: null, lastSuccessAt: '2026-11-22T14:05:00.000Z', consecutiveFailures: 0 },
-      { name: 'X @cfm_miku', adapter: 'x_crawl', enabled: true, lastRunAt: null, lastSuccessAt: null, consecutiveFailures: 3 },
-      { name: 'NOL 티켓', adapter: 'ticket', enabled: false, lastRunAt: null, lastSuccessAt: null, consecutiveFailures: 0 },
+      { name: 'PR TIMES', adapter: 'rss', enabled: true, lastRunAt: null, lastSuccessAt: '2026-11-22T14:05:00.000Z', consecutiveFailures: 0, implemented: true },
+      { name: 'X @cfm_miku', adapter: 'x_crawl', enabled: true, lastRunAt: null, lastSuccessAt: null, consecutiveFailures: 3, implemented: true },
+      { name: 'NOL 티켓', adapter: 'ticket', enabled: false, lastRunAt: null, lastSuccessAt: null, consecutiveFailures: 0, implemented: true },
     ]);
     expect(desc(m)).toContain('정상  11-22 23:05  0     PR TIMES');
     expect(desc(m)).toContain('경보  -----------  3     X @cfm_miku');

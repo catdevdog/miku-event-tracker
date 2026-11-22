@@ -26,6 +26,14 @@ import type { Notifier } from '../notify/notifier.js';
 /** 본문이 이보다 짧으면(링크 텍스트·잘린 RSS 설명) 원문 페이지를 가져와 LLM에 넘긴다. */
 const SHORT_BODY = 500;
 
+/**
+ * 짧은 항목이 키워드에서 떨어지면 원문 페이지 전체로 한 번 더 판정하는 어댑터.
+ * 행사 이름에는 미쿠가 없고 출연진·타임테이블에만 있는 경우를 잡기 위해서다
+ * (예: '원더리벳 2026' 라인업의 'TAK with 하츠네 미쿠 & 카사네 테토' 무대).
+ * x_crawl(트윗 주소는 본문을 못 가져옴), kopis(상세 API로 따로 처리), naver(규칙 9)는 뺀다.
+ */
+const PAGE_RECHECK_ADAPTERS = new Set(['html_diff', 'rss', 'ticket']);
+
 export interface PipelineDeps {
   db: Db;
   /** ANTHROPIC_API_KEY가 없으면 undefined: 키워드 판정까지만 하고 원문은 pending으로 남긴다 */
@@ -67,7 +75,18 @@ export async function processPendingItems(deps: PipelineDeps): Promise<ProcessRe
   for (const { item, source } of rows) {
     const config = JSON.parse(source.config) as { implicit_context?: boolean };
     const implicitContext = config.implicit_context ?? (source.adapter === 'kopis' || source.adapter === 'ticket');
-    const verdict = judgeKeywords(`${item.title ?? ''}\n${item.body ?? ''}`, keywords, { implicitContext });
+    let verdict = judgeKeywords(`${item.title ?? ''}\n${item.body ?? ''}`, keywords, { implicitContext });
+    let pageBody: string | undefined;
+    if (!verdict.pass && item.url && (item.body ?? '').length < SHORT_BODY && PAGE_RECHECK_ADAPTERS.has(source.adapter)) {
+      const page = await fetchPage(item.url).catch(() => undefined);
+      if (page) {
+        const recheck = judgeKeywords(`${item.title ?? ''}\n${page}`, keywords, { implicitContext });
+        if (recheck.pass) {
+          verdict = recheck;
+          pageBody = page;
+        }
+      }
+    }
     if (!verdict.pass) {
       await db.update(rawItems).set({ keywordHit: verdict.hit, llmStatus: 'skipped' }).where(eq(rawItems.id, item.id));
       result.skipped++;
@@ -78,8 +97,10 @@ export async function processPendingItems(deps: PipelineDeps): Promise<ProcessRe
 
     try {
       // LLM 입력 본문. 네이버 검색 결과는 약관상 LLM에 넣지 않고 원문 페이지를 다시 가져온다 (규칙 9).
-      let body = item.body ?? '';
-      if (source.adapter === 'naver') {
+      let body = pageBody ?? item.body ?? '';
+      if (pageBody !== undefined) {
+        // 키워드 재판정에서 이미 원문 페이지를 가져왔다
+      } else if (source.adapter === 'naver') {
         if (!item.url) throw new SkipItem();
         body = await fetchPage(item.url).catch(() => {
           throw new SkipItem(); // 회원 전용 카페 글 등

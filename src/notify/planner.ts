@@ -5,22 +5,13 @@ import type { EventRow } from '../pipeline/merge.js';
 import type { EventStatus } from '../pipeline/state.js';
 import type { OutgoingMessage } from './types.js';
 import { discordTime, formatKstShort, formatPeriodKo } from './format.js';
+import { KIND_KO, OFFICIALITY_KO, REGION_IMAGES, STATUS_KO } from './labels.js';
+import { noticeCard } from './cards.js';
 
 export type NotifyReason = 'new' | 'status_change' | 'reminder';
 
-const KIND_KO: Record<string, string> = {
-  concert: '공연', booth: '부스', stage: '무대', popup: '팝업', cafe: '콜라보 카페',
-  exhibition: '전시', live_viewing: '라이브뷰잉', goods: '굿즈', other: '기타',
-};
-const OFFICIALITY_KO: Record<string, string> = {
-  crypton: '크립톤 공식', licensed: '공식 라이선스', permitted_doujin: '허가 동인', unverified: '미확인',
-};
-const STATUS_KO: Record<string, string> = {
-  announced: '발표', ticket_scheduled: '예매 예정', on_sale: '판매 중', ongoing: '진행 중', ended: '종료', cancelled: '취소',
-};
-
 /** 사유별 머리말·아이콘·색 */
-function headline(reason: NotifyReason, status: EventStatus, slot: string): { label: string; icon: string; color: number } {
+export function headline(reason: NotifyReason, status: EventStatus, slot: string): { label: string; icon: string; color: number } {
   if (reason === 'reminder') return slot === 'T-1h' ? { label: '티켓 오픈 1시간 전', icon: '⏰', color: 0xff6b35 } : { label: '티켓 오픈 24시간 전', icon: '⏰', color: 0xf5a623 };
   if (reason === 'new') return { label: '새 행사', icon: '🆕', color: 0x39c5bb };
   if (status === 'ticket_scheduled') return { label: '예매 일정 공개', icon: '🗓️', color: 0x4a90e2 };
@@ -29,16 +20,7 @@ function headline(reason: NotifyReason, status: EventStatus, slot: string): { la
   return { label: STATUS_KO[status] ?? status, icon: '📢', color: 0x9b9b9b };
 }
 
-/**
- * 국내·일본·해외 구분 이미지. 2:1 가로형이라 썸네일(최대 80px)로는 글자가 안 보여 임베드 하단 이미지로 넣는다.
- * 파일은 레포 assets/에 두고 공개 레포의 GitHub raw 주소로 쓴다.
- */
-const ASSET_BASE = 'https://raw.githubusercontent.com/catdevdog/miku-event-tracker/main/assets';
-export const REGION_IMAGES: Record<string, string | undefined> = {
-  KR: `${ASSET_BASE}/region-kr.png`,
-  JP: `${ASSET_BASE}/region-jp.png`,
-  OTHER: `${ASSET_BASE}/region-overseas.png`,
-};
+export { REGION_IMAGES } from './labels.js';
 
 const REGION_FLAG: Record<string, string> = { KR: '🇰🇷 국내', JP: '🇯🇵 일본', OTHER: '🌏 해외' };
 
@@ -76,6 +58,7 @@ export function renderEventMessage(e: EventRow, reason: NotifyReason, slot = '',
 
   const image = REGION_IMAGES[e.region];
   return {
+    card: noticeCard(e, { label, icon, color }, links),
     embeds: [
       {
         author: { name: `${icon} ${label}` },

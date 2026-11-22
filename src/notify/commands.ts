@@ -7,6 +7,7 @@ import type { Diagnostics, SourceFunnelRow } from '../services/diagnostics.js';
 import type { EventRow } from '../pipeline/merge.js';
 import { formatKst, textTable } from './format.js';
 import type { OutgoingMessage } from './types.js';
+import { diagnosticsCard, eventsCard, EVENTS_PAGE_SIZE, recentCard, sourcesCard } from './cards.js';
 
 /** 길드 슬래시 명령 정의. 길드 단위로 등록하면 바로 반영된다. */
 export const commandDefinitions = [
@@ -60,7 +61,7 @@ const COLOR = { info: 0x39c5bb, warn: 0xf5a623 };
 
 // 표의 앞쪽 열은 글자 수가 같은 한글(2글자)·숫자만 써서 디스코드 고정폭 표에서 줄이 맞게 한다.
 const SOURCE_STATE = (r: SourceStatusRow) =>
-  !r.enabled ? '꺼짐' : r.consecutiveFailures >= 3 ? '경보' : r.consecutiveFailures > 0 ? '실패' : r.lastSuccessAt ? '정상' : '대기';
+  !r.enabled ? '꺼짐' : !r.implemented ? '준비' : r.consecutiveFailures >= 3 ? '경보' : r.consecutiveFailures > 0 ? '실패' : r.lastSuccessAt ? '정상' : '대기';
 
 export function buildSourcesReply(rows: SourceStatusRow[]): OutgoingMessage {
   const enabled = rows.filter((r) => r.enabled);
@@ -71,10 +72,11 @@ export function buildSourcesReply(rows: SourceStatusRow[]): OutgoingMessage {
     40,
   );
   return {
+    card: sourcesCard(rows),
     embeds: [
       {
         title: '소스 상태',
-        description: `${table}\n정상: 마지막 실행 성공 · 실패: 1~2회 연속 실패 · 경보: 3회 이상 · 대기: 아직 성공 없음 · 꺼짐: 비활성`,
+        description: `${table}\n정상: 마지막 실행 성공 · 실패: 1~2회 연속 실패 · 경보: 3회 이상 · 대기: 아직 성공 없음 · 준비: 수집기 구현 전 · 꺼짐: 비활성`,
         color: failing > 0 ? COLOR.warn : COLOR.info,
         footer: { text: `활성 ${enabled.length}/${rows.length}개 · 3회 이상 연속 실패 ${failing}개 · 시각은 한국 시간` },
       },
@@ -86,13 +88,14 @@ const HIT_KO: Record<string, string> = { strong: '강', weak: '약', none: '무'
 const LLM_KO: Record<string, string> = { pending: '대기', done: '완료', skipped: '제외', error: '오류' };
 
 export function buildRecentReply(rows: RecentRawItem[]): OutgoingMessage {
-  if (rows.length === 0) return { embeds: [{ title: '최근 수집', description: '아직 수집한 글이 없습니다.', color: COLOR.info }] };
+  if (rows.length === 0) return { card: recentCard(rows), embeds: [{ title: '최근 수집', description: '아직 수집한 글이 없습니다.', color: COLOR.info }] };
   const table = textTable(
     ['수집 시각', '키', '추출', '출처 · 제목'],
     rows.map((r) => [shortKst(r.fetchedAt), HIT_KO[r.keywordHit ?? ''] ?? '미', LLM_KO[r.llmStatus] ?? '기타', `${r.source} · ${r.title ?? '(제목 없음)'}`]),
     46,
   );
   return {
+    card: recentCard(rows),
     embeds: [
       {
         title: `최근 수집 ${rows.length}건`,
@@ -114,26 +117,35 @@ function shortDate(start: string | null, end: string | null): string {
   return end && end !== start ? `${s}~${end.slice(5).replace('-', '.')}` : s;
 }
 
-export function buildEventsReply(rows: EventRow[], scope: EventScope = 'all'): OutgoingMessage {
+/**
+ * /행사 응답. 카드는 8건씩 페이지로 나누고(page), 임베드(대체용)는 해당 페이지를 표로 보여 준다.
+ * links: 행사 id → 예매(없으면 원문) URL
+ */
+export function buildEventsReply(rows: EventRow[], scope: EventScope = 'all', page = 0, links: Map<number, string> = new Map()): OutgoingMessage {
   const title = `다가오는 행사 · ${SCOPE_KO[scope]}`;
+  const card = eventsCard(rows, scope, page, links);
   if (rows.length === 0) {
-    return { embeds: [{ title, description: '조건에 맞는 다가오는 행사가 없습니다. (종료·취소·검수 대기 행사는 빠집니다)', color: COLOR.info }] };
+    return { card, embeds: [{ title, description: '조건에 맞는 다가오는 행사가 없습니다. (종료·취소·검수 대기 행사는 빠집니다)', color: COLOR.info }] };
   }
+  const pages = Math.ceil(rows.length / EVENTS_PAGE_SIZE);
+  const p = Math.min(Math.max(0, page), pages - 1);
+  const pageRows = rows.slice(p * EVENTS_PAGE_SIZE, (p + 1) * EVENTS_PAGE_SIZE);
   const table = textTable(
     ['날짜', '지역', '상태', '행사'],
-    rows.map((e) => {
+    pageRows.map((e) => {
       const ticket = e.status === 'ticket_scheduled' && e.ticketOpenAt ? ` · 티켓 ${shortKst(e.ticketOpenAt)}` : '';
       return [shortDate(e.startDate, e.endDate), REGION2[e.region] ?? '해외', STATUS2[e.status] ?? '기타', `${e.title}${e.venue ? ` @${e.venue}` : ''}${ticket}`];
     }),
     72,
   );
   return {
+    card,
     embeds: [
       {
         title,
         description: `${table}\n상태: 발표 · 예정(예매 일정 공지) · 판매(판매 중) · 진행(행사 기간)`,
         color: COLOR.info,
-        footer: { text: `${rows.length}건 · 종료·취소·검수 대기 제외 · 시각은 한국 시간` },
+        footer: { text: `${rows.length}건${pages > 1 ? ` (${p + 1}/${pages}쪽)` : ''} · 종료·취소·검수 대기 제외 · 시각은 한국 시간` },
       },
     ],
   };
@@ -179,6 +191,7 @@ export function buildDiagnosticsReply(d: Diagnostics): OutgoingMessage {
   );
 
   return {
+    card: diagnosticsCard(d),
     embeds: [
       {
         title: '🩺 점검 · 행사 현황',
