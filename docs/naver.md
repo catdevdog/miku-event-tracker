@@ -67,7 +67,10 @@
 - 상태(`sources.state`): `combos["<종류>:<검색어>"].seen`에 최근 본 link 300개, 429 뒤에는 `blocked_until`(다음 날 0시 KST).
 - 첫 실행: 조합마다 첫 페이지만 보고 최근 14일(`first_run_days`) 글만 낸다. 날짜가 없는 카페글은 기준점만 잡는다.
 - 같은 link가 여러 검색어에 걸리면 한 번만 낸다(`external_id = link`).
-- 오류 처리: 401·403·400·404는 `AlertNowError`(첫 실패에서 바로 관리자 경보), 500은 일반 실패(3회 연속이면 경보), 429는 그때까지 모은 글과 상태를 저장하고 다음 날 0시(KST)까지 건너뛴다.
+- 오류 처리
+    - 401은 종류별로 처리한다. NAVER API HUB Application에는 뉴스·블로그·카페글 검색 API가 따로 붙어서, 하나만 빠져 있으면 그 종류만 401("요청한 API는 이 Application에서 활성화되어 있지 않습니다")이 난다. 그 종류만 다음 날 0시(KST)까지 끄고(`state.disabled_kinds`) 새로 꺼질 때 한 번 알린다. 모든 종류가 401이면(키 오류 등) `AlertNowError`로 실패시켜 바로 알린다.
+    - 400·403·404는 `AlertNowError`(첫 실패에서 바로 관리자 경보), 500은 일반 실패(3회 연속이면 경보).
+    - 429는 그때까지 모은 글과 상태를 저장하고 다음 날 0시(KST)까지 건너뛴다.
 - 키가 없으면(`NAVER_CLIENT_ID`·`NAVER_CLIENT_SECRET`) 실행마다 실패로 집계되고 3회째에 한 번 알린다.
 - 원문 페이지: 블로그 `blog.naver.com/{id}/{logNo}`는 본문이 iframe 안에 있어 `PostView.naver?blogId=&logNo=`로 가져온다. 가져온 본문이 200자 미만이면(회원 전용 카페글 등) LLM을 건너뛰고 `llm_status='skipped'`로 둔다. 검수 목록에 링크를 올리는 것은 관리 화면(5단계)에서 붙인다.
 - 삭제: 파이프라인 틱에서 하루 1회(job lock `purge_daily`, 24시간) `purge_after`가 지난 원문을 지운다. 원문을 가리키는 `event_sources`는 지우고, `event_state_log`·`llm_calls`는 `raw_item_id`만 비운다. 행사는 남는다.

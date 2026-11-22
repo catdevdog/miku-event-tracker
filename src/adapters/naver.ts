@@ -31,7 +31,11 @@ export interface NaverState extends Record<string, unknown> {
   combos?: Record<string, ComboState>;
   /** 429(하루 한도 초과) 뒤 다음 날 0시(KST)까지 건너뛴다 */
   blocked_until?: string;
+  /** 401이 난 종류(Application에 그 검색 API가 없음 등). 다음 날 0시(KST)까지 그 종류만 건너뛴다 */
+  disabled_kinds?: Partial<Record<NaverKind, string>>;
 }
+
+const KIND_KO: Record<NaverKind, string> = { news: '뉴스', blog: '블로그', cafearticle: '카페글' };
 
 /** 종류별 응답 항목. 필드는 NAVER API HUB 문서(2026-11-22 확인) 기준 */
 export interface NaverItem {
@@ -176,6 +180,12 @@ export function createNaverAdapter(deps: NaverDeps): SourceAdapter {
         return { items: [] }; // 하루 한도 초과 상태: 다음 날 0시(KST)까지 호출하지 않는다
       }
       const state: NaverState = { combos: { ...prev.combos } };
+      // 401로 꺼 둔 종류는 기한(다음 날 0시 KST)이 지날 때까지 건너뛴다
+      const disabled: Partial<Record<NaverKind, string>> = {};
+      for (const [k, until] of Object.entries(prev.disabled_kinds ?? {}) as [NaverKind, string][]) {
+        if (ctx.now.getTime() < Date.parse(until)) disabled[k] = until;
+      }
+      const newlyDisabled: string[] = [];
       const purgeAfter = new Date(ctx.now.getTime() + purgeDays * 86_400_000).toISOString();
       const firstRunFrom = ctx.now.getTime() - firstRunDays * 86_400_000;
       const out = new Map<string, RawItemInput>();
@@ -183,48 +193,60 @@ export function createNaverAdapter(deps: NaverDeps): SourceAdapter {
 
       try {
         for (const kind of kinds) {
-          for (const query of queries) {
-            const key = `${kind}:${query}`;
-            const firstRun = !prev.combos?.[key];
-            const seen = new Set(prev.combos?.[key]?.seen ?? []);
-            const fresh: NaverItem[] = [];
+          if (disabled[kind]) continue;
+          try {
+            for (const query of queries) {
+              const key = `${kind}:${query}`;
+              const firstRun = !prev.combos?.[key];
+              const seen = new Set(prev.combos?.[key]?.seen ?? []);
+              const fresh: NaverItem[] = [];
 
-            for (let start = 1; start <= maxStart; start += display) {
-              if (calls > 0 && delay > 0) await sleep(delay);
-              const res = await search(endpoints[kind], query, start, { display, sort });
-              calls++;
-              let reachedSeen = false;
-              for (const it of res.items) {
-                if (seen.has(it.link)) {
-                  reachedSeen = true;
-                  break; // 최신순이므로 본 글 뒤는 모두 본 글
+              for (let start = 1; start <= maxStart; start += display) {
+                if (calls > 0 && delay > 0) await sleep(delay);
+                const res = await search(endpoints[kind], query, start, { display, sort });
+                calls++;
+                let reachedSeen = false;
+                for (const it of res.items) {
+                  if (seen.has(it.link)) {
+                    reachedSeen = true;
+                    break; // 최신순이므로 본 글 뒤는 모두 본 글
+                  }
+                  fresh.push(it);
                 }
-                fresh.push(it);
+                // 첫 실행은 첫 페이지만. 본 글이 나왔거나 결과가 끝났으면 멈춘다.
+                if (firstRun || reachedSeen || res.items.length < display || start + display > Math.min(maxStart, res.total)) break;
               }
-              // 첫 실행은 첫 페이지만. 본 글이 나왔거나 결과가 끝났으면 멈춘다.
-              if (firstRun || reachedSeen || res.items.length < display || start + display > Math.min(maxStart, res.total)) break;
-            }
 
-            state.combos![key] = { seen: [...new Set([...fresh.map((f) => f.link), ...(prev.combos?.[key]?.seen ?? [])])].slice(0, SEEN_MAX) };
+              state.combos![key] = { seen: [...new Set([...fresh.map((f) => f.link), ...(prev.combos?.[key]?.seen ?? [])])].slice(0, SEEN_MAX) };
 
-            for (const it of fresh) {
-              const publishedAt = itemDate(kind, it);
-              // 첫 실행: 최근 first_run_days일 글만 (날짜 없는 카페글은 기준점만 잡는다)
-              if (firstRun && (!publishedAt || Date.parse(publishedAt) < firstRunFrom)) continue;
-              if (out.has(it.link)) continue;
-              const title = cleanText(it.title);
-              const body = cleanText(it.description);
-              out.set(it.link, {
-                externalId: it.link,
-                url: it.link,
-                title,
-                body,
-                lang: 'ko',
-                publishedAt,
-                contentHash: sha256(`${title}\n${body}`),
-                purgeAfter,
-              });
+              for (const it of fresh) {
+                const publishedAt = itemDate(kind, it);
+                // 첫 실행: 최근 first_run_days일 글만 (날짜 없는 카페글은 기준점만 잡는다)
+                if (firstRun && (!publishedAt || Date.parse(publishedAt) < firstRunFrom)) continue;
+                if (out.has(it.link)) continue;
+                const title = cleanText(it.title);
+                const body = cleanText(it.description);
+                out.set(it.link, {
+                  externalId: it.link,
+                  url: it.link,
+                  title,
+                  body,
+                  lang: 'ko',
+                  publishedAt,
+                  contentHash: sha256(`${title}\n${body}`),
+                  purgeAfter,
+                });
+              }
             }
+          } catch (err) {
+            // 401은 종류별로 따로 처리한다: Application에 뉴스·블로그·카페글 검색 API가 각각 따로 붙기 때문.
+            // 그 종류만 다음 날 0시(KST)까지 끄고 나머지 종류는 계속 수집한다.
+            if (err instanceof NaverApiError && err.status === 401) {
+              disabled[kind] = nextKstMidnight(ctx.now);
+              newlyDisabled.push(`${KIND_KO[kind]}: ${err.message}`);
+              continue;
+            }
+            throw err;
           }
         }
       } catch (err) {
@@ -237,13 +259,27 @@ export function createNaverAdapter(deps: NaverDeps): SourceAdapter {
             notes: [`하루 호출 한도를 넘었습니다 (HTTP 429). ${state.blocked_until} (다음 날 0시 KST)까지 네이버 검색을 건너뜁니다. 오늘 호출 ${calls}회`],
           };
         }
-        if (err instanceof NaverApiError && [400, 401, 403, 404].includes(err.status)) {
-          // 키·구독·요청 형식 문제: 재시도해도 같으므로 바로 알린다 (500은 일시 오류로 보고 실패 횟수로만 센다)
+        if (err instanceof NaverApiError && [400, 403, 404].includes(err.status)) {
+          // 요청 형식 문제: 재시도해도 같으므로 바로 알린다 (500은 일시 오류로 보고 실패 횟수로만 센다)
           throw new AlertNowError(err.message, { cause: err });
         }
         throw err;
       }
-      return { items: [...out.values()], state };
+      const active = kinds.filter((k) => !disabled[k]);
+      if (active.length === 0) {
+        // 모든 종류가 401: 키가 틀렸거나 검색 API가 하나도 붙어 있지 않다. 실패로 남기고 바로 알린다.
+        throw new AlertNowError(
+          newlyDisabled.length ? newlyDisabled.join('\n') : `뉴스·블로그·카페글 검색이 모두 401로 꺼져 있습니다 (${Object.values(disabled)[0]}까지)`,
+        );
+      }
+      if (Object.keys(disabled).length) state.disabled_kinds = disabled;
+      return {
+        items: [...out.values()],
+        state,
+        ...(newlyDisabled.length
+          ? { notes: [`일부 검색 API를 쓸 수 없어 다음 날 0시(KST)까지 건너뜁니다. NAVER API HUB Application에 해당 검색 API가 있는지 확인하세요.\n${newlyDisabled.join('\n')}`] }
+          : {}),
+      };
     },
   };
 }
