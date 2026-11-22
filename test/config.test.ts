@@ -37,4 +37,10 @@ describe('loadConfig', () => {
       expect((e as Error).message).not.toContain('no-colon-secret');
     }
   });
+
+  it('앞뒤 공백과 감싼 따옴표를 뗀다', () => {
+    const c = loadConfig({ ...valid, DISCORD_BOT_TOKEN: ' "abc.def.ghi"\n', DISCORD_APP_ID: '123456789012345678', DISCORD_GUILD_ID: '123456789012345679', DISCORD_NOTICE_CHANNEL_ID: '123456789012345680', DISCORD_ADMIN_CHANNEL_ID: '123456789012345681' });
+    expect(c.DISCORD_BOT_TOKEN).toBe('abc.def.ghi');
+    expect(loadConfig({ ...valid, KOPIS_SERVICE_KEY: "''" }).KOPIS_SERVICE_KEY).toBeUndefined();
+  });
 });

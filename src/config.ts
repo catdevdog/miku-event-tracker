@@ -1,17 +1,19 @@
 import { existsSync } from 'node:fs';
 import { z } from 'zod';
 
-// 빈 문자열은 값이 없는 것으로 본다 (.env의 `KEY=` 줄, Railway의 빈 변수).
-const optionalString = z.preprocess(
-  (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
-  z.string().optional(),
-);
+// 앞뒤 공백과 감싼 따옴표를 떼고, 빈 문자열은 값이 없는 것으로 본다 (.env의 `KEY=` 줄, Railway의 빈 변수).
+// 대시보드에 붙여 넣을 때 섞여 들어간 공백·따옴표 때문에 토큰이 틀렸다고 나오는 일을 막는다.
+export function cleanEnvValue(v: unknown): unknown {
+  if (typeof v !== 'string') return v;
+  let s = v.trim();
+  if (s.length >= 2 && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))) s = s.slice(1, -1).trim();
+  return s === '' ? undefined : s;
+}
+
+const optionalString = z.preprocess(cleanEnvValue, z.string().optional());
 
 const requiredString = (name: string) =>
-  z.preprocess(
-    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
-    z.string({ error: `${name}가 필요합니다` }),
-  );
+  z.preprocess(cleanEnvValue, z.string({ error: `${name}가 필요합니다` }));
 
 const schema = z.object({
   // ── 1단계 필수 ──

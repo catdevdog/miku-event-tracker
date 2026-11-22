@@ -43,6 +43,10 @@ const scheduler = createScheduler({ db, adapters, alerter });
 scheduler.start();
 
 if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID) {
+  // 봇 토큰은 점(.)으로 나뉜 세 부분이다. Client Secret(점 없음)을 잘못 넣은 경우를 미리 알린다.
+  if (config.DISCORD_BOT_TOKEN.split('.').length !== 3) {
+    console.warn('DISCORD_BOT_TOKEN이 봇 토큰 형식(점으로 나뉜 세 부분)이 아닙니다. Client Secret을 넣은 것은 아닌지 확인하세요.');
+  }
   bot = startDiscordBot({
     token: config.DISCORD_BOT_TOKEN,
     appId: config.DISCORD_APP_ID,

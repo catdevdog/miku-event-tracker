@@ -97,7 +97,14 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
         // discord.js 오류 메시지에는 토큰이 들어가지 않는다.
         log.error(`디스코드 로그인 실패: ${err instanceof Error ? err.message : String(err)}`);
         const code = (err as { code?: unknown } | null)?.code;
-        if (stopped || code === 'TokenInvalid') return;
+        if (code === 'TokenInvalid') {
+          log.error(
+            '봇 토큰이 맞지 않습니다. Developer Portal → 앱 → Bot → Reset Token으로 새로 받은 값을 DISCORD_BOT_TOKEN에 넣으세요. ' +
+              'OAuth2의 Client Secret이나 General Information의 Public Key가 아닌지 확인하세요.',
+          );
+          return;
+        }
+        if (stopped) return;
         const waitMin = RETRY_MIN[Math.min(attempt, RETRY_MIN.length - 1)]!;
         attempt++;
         log.warn(`${waitMin}분 뒤 디스코드 로그인을 다시 시도합니다`);
