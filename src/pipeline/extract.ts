@@ -122,6 +122,8 @@ export function systemPrompt(now: Date): string {
     '- 날짜·시각은 원문에 있는 것만 쓴다. 추측하지 않는다. ticket_open_at은 일반 예매 오픈 시각이며 선예매·추첨 접수 시작과 구분한다.',
     '- title은 행사 공식 명칭을 원문 표기 그대로 쓴다. 같은 행사를 여러 원문에서 받으므로 명칭을 일관되게 쓴다.',
     '- confidence: 행사 여부와 핵심 필드(일정·장소)에 확신이 낮으면 0.7 미만으로 준다.',
+    '',
+    '관련 없는 원문이어도 반드시 record_event 도구를 한 번 호출해 답한다 (is_relevant=false). 도구 호출 외의 텍스트는 쓰지 않는다.',
   ].join('\n');
 }
 
@@ -142,14 +144,18 @@ export function userPrompt(input: ExtractInput): string {
 export function createAnthropicExtractor(apiKey: string, client = new Anthropic({ apiKey, maxRetries: 2 })): Extractor {
   // strict(스키마 강제)를 모델이 거부하면 한 번만 strict 없이 다시 보내고 이후로는 끈다. 결과는 어차피 zod로 검증한다.
   let useStrict = true;
+  // 도구 강제 호출(tool_choice: tool)을 거부하는 모델(Sonnet 5.5 등)은 auto + strict로 보낸다. 모델별로 기억한다.
+  const autoChoiceModels = new Set<string>([REVIEW_MODEL]);
   const send = (input: ExtractInput, model: string) =>
     client.messages.create({
       model,
-      max_tokens: 1024,
+      max_tokens: 4096,
       system: systemPrompt(input.now),
       messages: [{ role: 'user', content: userPrompt(input) }],
       tools: [useStrict ? EXTRACT_TOOL : { ...EXTRACT_TOOL, strict: false }],
-      tool_choice: { type: 'tool', name: EXTRACT_TOOL.name, disable_parallel_tool_use: true },
+      tool_choice: autoChoiceModels.has(model)
+        ? { type: 'auto', disable_parallel_tool_use: true }
+        : { type: 'tool', name: EXTRACT_TOOL.name, disable_parallel_tool_use: true },
     });
   return {
     async extract(input, model) {
@@ -159,7 +165,10 @@ export function createAnthropicExtractor(apiKey: string, client = new Anthropic(
           res = await send(input, model);
         } catch (err) {
           const e = err as { status?: number; message?: string };
-          if (useStrict && e.status === 400 && /strict/i.test(e.message ?? '')) {
+          if (e.status === 400 && /tool_choice/i.test(e.message ?? '') && !autoChoiceModels.has(model)) {
+            autoChoiceModels.add(model);
+            res = await send(input, model);
+          } else if (useStrict && e.status === 400 && /strict/i.test(e.message ?? '')) {
             useStrict = false;
             res = await send(input, model);
           } else throw err;

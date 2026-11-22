@@ -306,6 +306,29 @@ describe('Anthropic 추출기', () => {
     expect(r).toMatchObject({ inputTokens: 900, outputTokens: 150 });
   });
 
+  it('Sonnet은 처음부터 auto + strict로 보내고, 강제 호출을 거부하는 모델은 auto로 바꿔 다시 보낸다', async () => {
+    const create = vi.fn(async () => toolResponse(base));
+    const ex = createAnthropicExtractor('k', { messages: { create } } as never);
+    await ex.extract(input, 'claude-sonnet-5-5');
+    expect((create.mock.calls[0] as unknown as [Record<string, any>])[0].tool_choice).toEqual({ type: 'auto', disable_parallel_tool_use: true });
+    expect((create.mock.calls[0] as unknown as [Record<string, any>])[0].tools[0].strict).toBe(true);
+
+    const create2 = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error('400 tool_choice: type "tool" and "any" are not supported for this model.'), { status: 400 }))
+      .mockResolvedValue(toolResponse(base));
+    const ex2 = createAnthropicExtractor('k', { messages: { create: create2 } } as never);
+    await ex2.extract(input, 'claude-haiku-5-5');
+    await ex2.extract(input, 'claude-haiku-5-5');
+    expect(create2.mock.calls.map((c) => ((c as unknown as [Record<string, any>])[0].tool_choice as { type: string }).type)).toEqual(['tool', 'auto', 'auto']);
+  });
+
+  it('auto에서 도구를 부르지 않으면 오류(원문 단위 실패)', async () => {
+    const create = vi.fn(async () => ({ content: [{ type: 'text', text: '모르겠습니다' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }));
+    const ex = createAnthropicExtractor('k', { messages: { create } } as never);
+    await expect(ex.extract(input, 'claude-sonnet-5-5')).rejects.toThrow(/도구 호출이 없는 응답/);
+  });
+
   it('strict를 거부하면 strict 없이 한 번 더 보낸다', async () => {
     const create = vi
       .fn()
