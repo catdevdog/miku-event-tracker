@@ -87,6 +87,8 @@ export interface MergeResult {
   /** 상태가 바뀌었으면 이전 상태 (새 행사면 null) */
   statusFrom: EventStatus | null;
   statusChanged: boolean;
+  /** 확신이 높은 출처가 확인해 검수 대기가 풀렸으면 true (새 행사처럼 알린다) */
+  reviewCleared?: boolean;
 }
 
 const UPDATABLE = ['city', 'venue', 'startDate', 'endDate', 'ticketOpenAt', 'ticketUrl'] as const;
@@ -185,7 +187,7 @@ export async function mergeExtraction(db: Db, ext: Extraction, ctx: MergeContext
   }
   await linkSource(db, existing.id, ext, ctx);
   const [event] = await db.select().from(events).where(eq(events.id, existing.id));
-  return { event: event!, created: false, statusFrom: existing.status, statusChanged };
+  return { event: event!, created: false, statusFrom: existing.status, statusChanged, reviewCleared: updates.needsReview === 0 };
 }
 
 async function linkSource(db: Db, eventId: number, ext: Extraction, ctx: MergeContext) {

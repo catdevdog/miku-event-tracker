@@ -15,6 +15,13 @@
       "when": 1795356626173,
       "tag": "0001_adapter_ticket",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1795365853698,
+      "tag": "0002_event_discord",
+      "breakpoints": true
     }
   ]
 }

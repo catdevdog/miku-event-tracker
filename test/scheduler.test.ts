@@ -29,16 +29,16 @@ const alerter = (): Alerter & { messages: string[] } => {
 describe('스케줄러', () => {
   it('enabled=0 이거나 target=TODO인 소스는 대상에서 뺀다', async () => {
     const all = await t.db.select().from(sources);
-    expect(all.filter(isSchedulable)).toHaveLength(28);
+    expect(all.filter(isSchedulable)).toHaveLength(30);
   });
 
-  it('no-op 어댑터로 한 틱을 돌리면 29개 모두 ok로 기록되고, 바로 다음 틱에는 차례가 없다', async () => {
+  it('no-op 어댑터로 한 틱을 돌리면 30개 모두 ok로 기록되고, 바로 다음 틱에는 차례가 없다', async () => {
     const now = new Date('2026-11-22T00:00:00Z');
     const s = createScheduler({ db: t.db, adapters: allNoop, alerter: alerter(), now: () => now });
     const r1 = await s.tick();
-    expect(r1).toMatchObject({ checked: 28, due: 28, outcomes: { ok: 28, error: 0, skipped: 0, locked: 0 } });
+    expect(r1).toMatchObject({ checked: 30, due: 30, outcomes: { ok: 30, error: 0, skipped: 0, locked: 0 } });
     const runs = await t.db.select().from(jobRuns);
-    expect(runs).toHaveLength(28);
+    expect(runs).toHaveLength(30);
     expect(runs.every((r) => r.status === 'ok' && r.finishedAt)).toBe(true);
 
     const r2 = await s.tick();
@@ -58,7 +58,7 @@ describe('스케줄러', () => {
   it('어댑터가 없으면 skipped로만 남고 성공 시각은 바뀌지 않는다', async () => {
     const s = createScheduler({ db: t.db, adapters: {}, alerter: alerter() });
     const r = await s.tick();
-    expect(r.outcomes.skipped).toBe(28);
+    expect(r.outcomes.skipped).toBe(30);
     const src = await t.db.select().from(sources);
     expect(src.every((x) => x.lastSuccessAt === null)).toBe(true);
   });
@@ -124,7 +124,7 @@ describe('runSource', () => {
   it('마지막 실행이 skipped였던 소스는 last_run_at을 비워 바로 돌게 한다', async () => {
     const s = createScheduler({ db: t.db, adapters: {}, alerter: alerter() });
     await s.tick();
-    expect(await resetSkippedSources(t.db)).toBe(28);
+    expect(await resetSkippedSources(t.db)).toBe(30);
     const src = await t.db.select().from(sources);
     expect(src.every((x) => x.lastRunAt === null)).toBe(true);
     const s2 = createScheduler({ db: t.db, adapters: allNoop, alerter: alerter() });

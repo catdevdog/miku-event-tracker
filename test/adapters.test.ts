@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createRssAdapter } from '../src/adapters/rss.js';
-import { createHtmlDiffAdapter, extractLinks, extractTextBlocks } from '../src/adapters/htmlDiff.js';
+import { createHtmlDiffAdapter, extractLinks, extractTextBlocks, jsonBlocks } from '../src/adapters/htmlDiff.js';
 import { createTicketAdapter, parseKstDateTime, parseMelonSearch, parseMelonTicketOpen } from '../src/adapters/ticket.js';
 import { buildWindows, createKopisAdapter, kopisDetailBody, parseKopisDetail, parseKopisList } from '../src/adapters/kopis.js';
 import { createXCrawlAdapter, type TweetLike, type TweetSource } from '../src/adapters/xCrawl.js';
@@ -263,5 +263,49 @@ describe('x_crawl', () => {
     await expect(a.run(src, ctx())).rejects.toThrow(/쿠키가 만료/);
     const noCookie = createXCrawlAdapter({ guest: source([], true) });
     await expect(noCookie.run(src, ctx())).rejects.toThrow(/X_AUTH_TOKEN/);
+  });
+});
+
+describe('html_diff json 모드 (AGF 공식 사이트 데이터)', () => {
+  const stage = (rows: { stageTime: string; stageName: string; guest: string }[]) => JSON.stringify({ intReturn: 0, listData: rows.map((r) => ({ stageDay: '12-05', ...r })) });
+  const board = JSON.stringify({ intReturn: 0, con: 1, listData: [{ idx: 88, title: '(필독) 프레스 참가 신청 안내', writeday: '2026-06-25 15:32:22.500', numm: 54, content: '<p>프레스 <b>ID</b> 발급</p>' }] });
+  const cfg = {
+    mode: 'json',
+    json: {
+      list_path: 'listData',
+      fields: ['stageTime', 'stageName', 'guest', 'title', 'writeday', 'content'],
+      page_url: 'https://www.agfkorea.com/stage?idx=1',
+      urls: [
+        { url: 'https://api.example/getStageTimeline?gubun=red&stageDay=12-05', label: 'RED 스테이지 12-05' },
+        { url: 'https://api.example/getBoardList?board_id=1', label: '공지' },
+      ],
+    },
+  };
+
+  it('첫 실행은 기준점만, 다음 실행은 새 행만 내고 조회수 같은 빠진 필드는 무시한다', async () => {
+    let rows = [{ stageTime: '13:00~13:45', stageName: '페이트/그랜드 오더 스테이지', guest: '타카하시 리에' }];
+    let boardBody = board;
+    const fetchText = fakeFetch([
+      [/getStageTimeline/, () => stage(rows)],
+      [/getBoardList/, () => boardBody],
+    ]);
+    const adapter = createHtmlDiffAdapter({ fetchText });
+    const src = fakeSource({ adapter: 'html_diff', target: 'https://www.agfkorea.com/stage?idx=1' });
+    const first = await adapter.run(src, { now: new Date(), state: {}, config: cfg });
+    expect(first.items).toEqual([]);
+
+    rows = [...rows, { stageTime: '16:45~17:30', stageName: 'TAK with 하츠네 미쿠 & 카사네 테토', guest: 'TAK' }];
+    boardBody = board.replace('"numm":54', '"numm":99'); // 조회수만 바뀜
+    const second = await adapter.run(src, { now: new Date(), state: first.state!, config: cfg });
+    expect(second.items.map((i) => i.body)).toEqual(['RED 스테이지 12-05 · 16:45~17:30 · TAK with 하츠네 미쿠 & 카사네 테토 · TAK']);
+    expect(second.items[0]!.url).toBe('https://www.agfkorea.com/stage?idx=1');
+  });
+
+  it('HTML 필드는 태그를 지우고, 목록이 없는 응답은 건너뛴다', async () => {
+    const fetchText = fakeFetch([
+      [/getStageTimeline/, JSON.stringify({ intReturn: 1 })],
+      [/getBoardList/, board],
+    ]);
+    expect(await jsonBlocks(cfg.json, fetchText)).toEqual(['공지 · (필독) 프레스 참가 신청 안내 · 2026-06-25 15:32:22.500 · 프레스 ID 발급']);
   });
 });

@@ -49,7 +49,8 @@ describe('/가이드', () => {
     expect(active[0]).toContain('X 계정 7곳 (±10분)');
     expect(active.some((l) => l.startsWith('**하루 1번**') && l.includes('KOPIS 공연목록 1곳'))).toBe(true);
     expect(boost.join('\n')).toContain('일러스타 페스');
-    for (const name of ['NOL 티켓', '인스타그램 @animatecafe_korea', 'AGF 공식 사이트']) expect(idle).toContain(name);
+    for (const name of ['NOL 티켓', '인스타그램 @animatecafe_korea', '티켓링크']) expect(idle).toContain(name);
+    expect(idle).not.toContain('AGF');
     for (const name of ['멜론티켓', '네이버 검색']) expect(idle).not.toContain(name);
     expect(active[0]).toContain('네이버 검색 1곳');
   });

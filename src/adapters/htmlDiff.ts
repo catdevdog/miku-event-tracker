@@ -6,8 +6,12 @@ import { fetchStatus as defaultFetchStatus, fetchText as defaultFetchText, remem
 export interface HtmlDiffConfig {
   /** 링크·본문을 볼 범위 (CSS 선택자). 기본 body */
   selector?: string;
-  /** links: 새로 생긴 링크를 항목으로 (기본) / text: 새로 생긴 문단을 항목으로 (링크가 없는 사이트) */
-  mode?: 'links' | 'text';
+  /**
+   * links: 새로 생긴 링크를 항목으로 (기본) / text: 새로 생긴 문단을 항목으로 (링크가 없는 사이트)
+   * json: 사이트가 화면을 그릴 때 부르는 JSON 목록(json.urls)에서 새로 생긴 행을 항목으로 (예: AGF 스테이지·공지)
+   */
+  mode?: 'links' | 'text' | 'json';
+  json?: JsonDiffConfig;
   /** 스크립트로 그리는 사이트면 Playwright로 렌더링한 HTML을 쓴다 */
   render?: boolean;
   /** 제외할 링크 URL 정규식 */
@@ -15,6 +19,17 @@ export interface HtmlDiffConfig {
   /** 연도별 경로 감시: pattern의 {year}를 올해·내년으로 바꿔 페이지가 생기는지(200) 본다 */
   year_paths?: boolean;
   pattern?: string;
+}
+
+export interface JsonDiffConfig {
+  /** 부를 주소와 앞에 붙일 라벨 (예: "RED 12-05") */
+  urls: { url: string; label?: string }[];
+  /** 응답에서 목록이 있는 키 (기본 listData) */
+  list_path?: string;
+  /** 행에서 쓸 필드. 조회수처럼 자주 바뀌는 필드를 빼야 같은 행이 새 글로 잡히지 않는다 */
+  fields: string[];
+  /** 항목 링크로 쓸 사람용 페이지 (기본 source.target) */
+  page_url?: string;
 }
 
 interface HtmlDiffState {
@@ -110,6 +125,21 @@ export function createHtmlDiffAdapter(deps: HtmlDiffDeps = {}): SourceAdapter {
       const firstRun = !Array.isArray(state.seen);
       const items: RawItemInput[] = [];
 
+      if (cfg.mode === 'json') {
+        if (!cfg.json?.urls?.length || !cfg.json.fields?.length) throw new Error('mode=json 소스에 json.urls·json.fields가 없습니다');
+        const blocks = await jsonBlocks(cfg.json, fetchText);
+        const ids = blocks.map((b) => sha256(b).slice(0, 16));
+        const seen = new Set(state.seen ?? []);
+        const pageUrl = cfg.json.page_url ?? source.target;
+        if (!firstRun) {
+          blocks.forEach((b, i) => {
+            if (seen.has(ids[i]!)) return;
+            items.push({ externalId: `${source.target}#${ids[i]}`, url: pageUrl, title: b.slice(0, 120), body: b, contentHash: sha256(b) });
+          });
+        }
+        return { items, state: { seen: rememberSeen(state.seen ?? [], ids, 2000), liveYears: state.liveYears ?? [] } };
+      }
+
       let html: string;
       if (cfg.render) {
         if (!deps.renderHtml) throw new Error('render=true 소스인데 렌더러가 없습니다');
@@ -173,4 +203,32 @@ export function createHtmlDiffAdapter(deps: HtmlDiffDeps = {}): SourceAdapter {
       return { items, state: { seen: rememberSeen(state.seen ?? [], seenNow, 2000), liveYears } };
     },
   };
+}
+
+/**
+ * JSON 목록의 행을 한 줄 텍스트로. 필드 값 중 HTML은 태그를 지운다.
+ * 예: "RED 12-05 · 13:00~13:45 · 페이트/그랜드 오더 스테이지 · 타카하시 리에, 아카바네 켄지"
+ */
+export async function jsonBlocks(cfg: JsonDiffConfig, fetchText: FetchText): Promise<string[]> {
+  const out: string[] = [];
+  for (const { url, label } of cfg.urls) {
+    const res = await fetchText(url, { headers: { accept: 'application/json' } });
+    let data: unknown;
+    try {
+      data = JSON.parse(res.text);
+    } catch {
+      throw new Error(`JSON이 아닌 응답: ${url}`);
+    }
+    const list = (data as Record<string, unknown>)[cfg.list_path ?? 'listData'];
+    if (!Array.isArray(list)) continue; // 아직 데이터가 없는 날짜 등
+    for (const row of list as Record<string, unknown>[]) {
+      const values = cfg.fields
+        .map((f) => row[f])
+        .filter((v): v is string | number => typeof v === 'string' || typeof v === 'number')
+        .map((v) => squash(cheerio.load(`<div>${String(v)}</div>`)('div').text()).slice(0, 1500))
+        .filter(Boolean);
+      if (values.length) out.push([label, ...values].filter(Boolean).join(' · '));
+    }
+  }
+  return out;
 }

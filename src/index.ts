@@ -17,6 +17,9 @@ import { listCollectionPlan, listSourceStatuses } from './services/sources.js';
 import { listRecentRawItems } from './services/rawItems.js';
 import { eventLinks, listUpcomingEvents, parseEventScope, type EventScope } from './services/events.js';
 import { EVENTS_PAGE_SIZE, parseEventsPageId } from './notify/cards.js';
+import { decideReview, parseReviewId } from './notify/review.js';
+import { createDiscordJobs } from './notify/discordJobs.js';
+import { createQaAnswerer } from './services/qa.js';
 import { createPipelineRunner } from './pipeline/index.js';
 import { createAnthropicExtractor } from './pipeline/extract.js';
 import { ensureDefaultSubscriber } from './notify/planner.js';
@@ -53,6 +56,8 @@ const alerter = dedupAlerter(notifier.alerter);
 const scheduler = createScheduler({ db, adapters: createAdapters(config, db), alerter });
 scheduler.start();
 
+const qa = config.ANTHROPIC_API_KEY ? createQaAnswerer(db, config.ANTHROPIC_API_KEY) : undefined;
+
 if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID) {
   // 봇 토큰은 점(.)으로 나뉜 세 부분이다. Client Secret(점 없음)을 잘못 넣은 경우를 미리 알린다.
   if (config.DISCORD_BOT_TOKEN.split('.').length !== 3) {
@@ -88,9 +93,16 @@ if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID
           return null;
       }
     },
-    onButton: async (customId) => {
+    onButton: async (customId, { userId }) => {
       const page = parseEventsPageId(customId);
-      return page ? eventsPage(parseEventScope(page.scope), page.page) : null;
+      if (page) return eventsPage(parseEventScope(page.scope), page.page);
+      const review = parseReviewId(customId);
+      if (review) return (await decideReview(db, review.eventId, review.decision, userId))?.message ?? null;
+      return null;
+    },
+    onMention: async (question) => {
+      if (!qa) return '질문 답변은 Claude API 키(ANTHROPIC_API_KEY)가 있어야 쓸 수 있어요. `/행사`로 목록을 볼 수 있어요.';
+      return qa.answer(question);
     },
     presence: async () => {
       const all = await listUpcomingEvents(db, { limit: 1000 });
@@ -121,6 +133,10 @@ const pipeline = createPipelineRunner({
 if (config.NOTIFY_PAUSED) console.warn('NOTIFY_PAUSED: 알림을 큐에만 쌓고 보내지 않습니다.');
 pipeline.start();
 
+// 디스코드 주기 작업: 검수 카드(1분), 서버 예약 이벤트(10분), 이번 주 요약(월 09:00 KST)
+const discordJobs = createDiscordJobs({ db, bot: () => bot, notifier, alerter, adminChannelId: config.DISCORD_ADMIN_CHANNEL_ID });
+if (bot) discordJobs.start();
+
 const app = createApp({
   db,
   adminBasicAuth: config.ADMIN_BASIC_AUTH,
@@ -138,6 +154,7 @@ async function shutdown(signal: string) {
   setTimeout(() => process.exit(1), 10_000).unref();
   await scheduler.stop();
   await pipeline.stop();
+  discordJobs.stop();
   await bot?.stop();
   server.close(() => {
     client.close();

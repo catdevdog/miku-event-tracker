@@ -33,7 +33,7 @@ describe('HTTP', () => {
     expect(wrong.status).toBe(401);
     const ok = await fetch(`${base}/api/admin/sources`, { headers: { authorization: `Basic ${btoa('admin:pw')}` } });
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toHaveLength(34);
+    expect(await ok.json()).toHaveLength(35);
   });
 
   it('/api/admin/job-runs, /api/admin/raw-items', async () => {

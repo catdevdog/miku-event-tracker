@@ -116,11 +116,11 @@ function matchesFilters(filtersJson: string, e: EventRow): boolean {
 
 /**
  * 알림을 큐(notifications, status=queued)에 넣는다. 같은 (행사, 구독자, 사유, 상태, 슬롯)은 유일 제약으로 한 번만.
- * 검수 대기(needs_review=1) 행사는 알리지 않는다.
+ * 검수 대기(needs_review=1)·검수에서 무시(2)한 행사는 알리지 않는다.
  * @returns 새로 큐에 넣은 수
  */
 export async function planNotifications(db: Db, e: EventRow, reason: NotifyReason, slot = ''): Promise<number> {
-  if (e.needsReview === 1) return 0;
+  if (e.needsReview !== 0) return 0; // 1 검수 대기, 2 검수에서 무시
   const subs = (await db.select().from(subscribers).where(eq(subscribers.active, 1))).filter((s) => matchesFilters(s.filters, e));
   if (subs.length === 0) return 0;
   const message = JSON.stringify(renderEventMessage(e, reason, slot, await eventSourceUrls(db, e.id)));
@@ -136,9 +136,12 @@ export async function planNotifications(db: Db, e: EventRow, reason: NotifyReaso
   return queued;
 }
 
-/** 규칙 7: 새 행사(종료된 것 제외)는 new, 상태가 ticket_scheduled·on_sale·cancelled로 바뀌면 status_change */
-export async function planForChange(db: Db, e: EventRow, change: { created: boolean; statusChanged: boolean }): Promise<number> {
-  if (change.created) return e.status === 'ended' ? 0 : planNotifications(db, e, 'new');
+/**
+ * 규칙 7: 새 행사(종료된 것 제외)는 new, 상태가 ticket_scheduled·on_sale·cancelled로 바뀌면 status_change.
+ * 검수 대기가 풀린 행사(확신 높은 출처로 확인되거나 디스코드에서 승인)는 그때 처음 알리므로 new로 본다.
+ */
+export async function planForChange(db: Db, e: EventRow, change: { created: boolean; statusChanged: boolean; reviewCleared?: boolean }): Promise<number> {
+  if (change.created || change.reviewCleared) return e.status === 'ended' ? 0 : planNotifications(db, e, 'new');
   if (change.statusChanged && ['ticket_scheduled', 'on_sale', 'cancelled'].includes(e.status)) return planNotifications(db, e, 'status_change');
   return 0;
 }

@@ -171,13 +171,74 @@
     "name": "AGF 공식 사이트 (부스 배치도·타임테이블)",
     "layer": "L2",
     "adapter": "html_diff",
-    "target": "TODO",
+    "target": "https://www.agfkorea.com/information",
     "region": "KR",
-    "interval_min": 1440,
-    "boost_interval_min": 360,
-    "enabled": false,
+    "interval_min": 180,
+    "boost_interval_min": 60,
+    "enabled": true,
     "config": {
-      "todo": "공식 사이트 URL 미확인"
+      "render": true,
+      "mode": "text",
+      "note": "참가사 안내 페이지(스크립트로 그림). 새로 생긴 참가사 소개 문단을 항목으로"
+    }
+  },
+  {
+    "name": "AGF 스테이지·콜라보 카페·공지 (공식 사이트 데이터)",
+    "layer": "L2",
+    "adapter": "html_diff",
+    "target": "https://www.agfkorea.com/stage?idx=1",
+    "region": "KR",
+    "interval_min": 180,
+    "boost_interval_min": 60,
+    "config": {
+      "mode": "json",
+      "note": "agfkorea.com 화면이 부르는 데이터 주소(사이트 코드에서 확인, 2026-11-23). 연도(yy)는 행사마다 바꾼다",
+      "json": {
+        "list_path": "listData",
+        "fields": [
+          "stageTime",
+          "stageName",
+          "guest",
+          "title",
+          "writeday",
+          "content"
+        ],
+        "page_url": "https://www.agfkorea.com/stage?idx=1",
+        "urls": [
+          {
+            "url": "https://api.agfkorea.com:3070/front/api/getStageTimeline?yy=2026&gubun=red&stageDay=12-04",
+            "label": "RED 스테이지 12-04"
+          },
+          {
+            "url": "https://api.agfkorea.com:3070/front/api/getStageTimeline?yy=2026&gubun=red&stageDay=12-05",
+            "label": "RED 스테이지 12-05"
+          },
+          {
+            "url": "https://api.agfkorea.com:3070/front/api/getStageTimeline?yy=2026&gubun=red&stageDay=12-06",
+            "label": "RED 스테이지 12-06"
+          },
+          {
+            "url": "https://api.agfkorea.com:3070/front/api/getStageTimeline?yy=2026&gubun=blue&stageDay=12-04",
+            "label": "BLUE 스테이지 12-04"
+          },
+          {
+            "url": "https://api.agfkorea.com:3070/front/api/getStageTimeline?yy=2026&gubun=blue&stageDay=12-05",
+            "label": "BLUE 스테이지 12-05"
+          },
+          {
+            "url": "https://api.agfkorea.com:3070/front/api/getStageTimeline?yy=2026&gubun=blue&stageDay=12-06",
+            "label": "BLUE 스테이지 12-06"
+          },
+          {
+            "url": "https://api.agfkorea.com:3070/front/api/getCollabo?yy=2026",
+            "label": "콜라보 카페"
+          },
+          {
+            "url": "https://api.agfkorea.com:3070/front/api/getBoardList?board_id=1&lang=KOR&gotoPage=1",
+            "label": "공지"
+          }
+        ]
+      }
     }
   },
   {

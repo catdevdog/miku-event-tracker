@@ -78,7 +78,7 @@ CREATE TABLE events (
   parent_event_id INTEGER REFERENCES events(id),         -- AGF 같은 상위 행사 안의 부스·스테이지
   summary_ko      TEXT,
   dedup_key       TEXT    NOT NULL UNIQUE,               -- 정규화 행사명 + 시작일 + 장소
-  needs_review    INTEGER NOT NULL DEFAULT 0,            -- LLM 확신도가 낮으면 1
+  needs_review    INTEGER NOT NULL DEFAULT 0,            -- 0 확정, 1 검수 대기(LLM 확신도 낮음), 2 검수에서 무시
   created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -107,6 +107,18 @@ CREATE TABLE event_state_log (
   created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX idx_state_log_event ON event_state_log(event_id, created_at);
+
+-- 행사별 디스코드 연동 상태: 관리자 채널 검수 카드, 서버 예약 이벤트
+CREATE TABLE event_discord (
+  event_id          INTEGER PRIMARY KEY REFERENCES events(id),
+  review_channel_id TEXT,                                -- 검수 카드를 올린 채널
+  review_message_id TEXT,                                -- 검수 카드 메시지 (있으면 다시 올리지 않음)
+  reviewed_by       TEXT,                                -- 승인·무시한 디스코드 사용자 ID
+  reviewed_at       TEXT,
+  guild_event_id    TEXT,                                -- 디스코드 서버 예약 이벤트 ID
+  guild_event_hash  TEXT,                                -- 마지막으로 반영한 제목·일정·장소 해시
+  updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+);
 
 -- 알림 받을 대상 (디스코드 봇)
 CREATE TABLE subscribers (

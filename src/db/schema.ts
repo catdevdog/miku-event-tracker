@@ -214,6 +214,22 @@ export const subscribers = sqliteTable(
   ],
 );
 
+// 행사별 디스코드 연동 상태: 검수 카드(관리자 채널), 서버 예약 이벤트
+export const eventDiscord = sqliteTable('event_discord', {
+  eventId: integer('event_id')
+    .primaryKey()
+    .references(() => events.id),
+  reviewChannelId: text('review_channel_id'),
+  reviewMessageId: text('review_message_id'),
+  reviewedBy: text('reviewed_by'),
+  reviewedAt: text('reviewed_at'),
+  guildEventId: text('guild_event_id'),
+  guildEventHash: text('guild_event_hash'),
+  updatedAt: text('updated_at')
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
+
 // 발송 기록 (같은 행사·상태·슬롯으로 두 번 보내지 않음)
 export const notifications = sqliteTable(
   'notifications',

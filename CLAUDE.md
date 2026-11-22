@@ -17,7 +17,7 @@
 | DB | SQLite. `@libsql/client` + `drizzle-orm/libsql`. `DATABASE_URL=file:/data/tracker.db` (Railway 볼륨). Turso로 옮길 때는 URL과 토큰만 교체 |
 | 수집 | `rss-parser`, `fetch` + `cheerio`, `playwright`(컨테이너 안 chromium, 스크립트로 그리는 페이지만), 예매처는 `ticket` 어댑터(멜론티켓은 서버 렌더링이라 fetch), `@the-convocation/twitter-scraper`(X), 인스타그램 Graph API Business Discovery, KOPIS 오픈API(XML 응답, `fast-xml-parser`), 네이버 검색 API(API HUB) |
 | LLM | `@anthropic-ai/sdk`. 기본 `claude-haiku-5-5`, 확신도가 낮을 때만 `claude-sonnet-5-5`. tool use로 JSON 스키마 강제 |
-| 알림 | discord.js v14 봇. 공지 채널, 관리자 경보 채널, DM, 슬래시 명령. 공지와 명령 응답은 Components V2 카드로 보내고, 디스코드가 카드를 형식 오류(400)로 거부하면 같은 메시지의 임베드로 보낸다. 봇이 준비 전이거나 발송에 실패하면 공지는 웹후크(`DISCORD_NOTICE_WEBHOOK_URL`, 선택)로 임베드를 보낸다. 관리자 경보는 웹후크로 보내지 않는다 |
+| 알림 | discord.js v14 봇. 공지 채널, 관리자 경보 채널, DM, 슬래시 명령. 공지와 명령 응답은 Components V2 카드로 보내고, 디스코드가 카드를 형식 오류(400)로 거부하면 같은 메시지의 임베드로 보낸다. 관리자 채널 검수 카드(승인·무시 버튼), 국내 행사 서버 예약 이벤트, 매주 월요일 이번 주 요약, 봇 멘션 질문 답변도 봇이 맡는다. 봇이 준비 전이거나 발송에 실패하면 공지는 웹후크(`DISCORD_NOTICE_WEBHOOK_URL`, 선택)로 임베드를 보낸다. 관리자 경보는 웹후크로 보내지 않는다 |
 | 배포 | Railway Hobby, Docker 1개 (Playwright 공식 이미지 기반), 볼륨 `/data`. 헬스체크 경로 `/health`는 Railway 대시보드에서 설정한다(railway.json 같은 Config as Code는 Railway에서 폐기 예정이라 쓰지 않음) |
 | 개발 | NAS DevBox. 단 DevBox 컨테이너에는 chromium을 설치할 수 없으므로 Playwright 어댑터는 로컬 PC나 Railway에서 테스트 |
 
@@ -37,7 +37,7 @@ src/
     registry.ts         구현된 어댑터 목록(createAdapters). 없는 어댑터의 소스는 job_runs에 skipped로 남는다
     http.ts             fetch 래퍼, 해시, 상태 목록 관리
     rss.ts              RSS 2.0·RSS 1.0(RDF)·Atom
-    htmlDiff.ts         새 링크·새 문단 감지, 연도별 페이지(404→200) 감지
+    htmlDiff.ts         새 링크·새 문단·새 JSON 행(json 모드: 사이트가 부르는 데이터 주소) 감지, 연도별 페이지(404→200) 감지
     render.ts           Playwright 렌더링 (config.render=true인 소스만)
     ticket.ts           예매처 (멜론티켓 검색·티켓오픈소식 구현, NOL·YES24·티켓링크 미구현)
     kopis.ts  xCrawl.ts
@@ -57,13 +57,17 @@ src/
     guide.ts            /가이드 응답 (수집 주기·미수집 소스는 sources 설정에서 계산)
     cards.ts            Components V2 카드: 공지(예매·원문·캘린더 버튼), /행사(8건씩 페이지), /소스·/최근수집·/점검 묶음 카드
     labels.ts           표시용 라벨·아이콘·지역 색·지역 이미지 주소
+    review.ts           검수 대기 행사 카드(관리자 채널) + [승인]·[무시] 처리
+    guildEvents.ts      국내 행사 → 디스코드 서버 예약 이벤트 생성·수정·삭제
+    weekly.ts           매주 월요일 09:00 KST 이번 주 행사 요약
+    discordJobs.ts      봇 주기 작업: 검수 카드(1분), 서버 이벤트(10분), 주간 요약(월 09:00 KST, job lock 'weekly_digest')
     notifier.ts         공지(봇 → 웹후크 순) · 관리자 경보(봇 → 콘솔, 30분 중복 억제)
     webhook.ts          공지 채널 웹후크 발송
     format.ts           2000자 자르기, KST 표시
     planner.ts          알림 임베드 생성, notifications 큐 적재, subscribers.filters 매칭, 기본 구독자(공지 채널)
     reminders.ts        ticket_open_at 기준 T-24h, T-1h
     sender.ts           큐 발송 (공지 채널은 봇 → 웹후크, 실패 시 3회까지 재시도)
-  services/             공용 조회 로직: status(상태), sources(/소스·/가이드), rawItems(/최근수집), events(/행사), diagnostics(/점검). 추후 멘션 질의·공개 웹도 여기를 쓴다
+  services/             공용 조회 로직: status(상태), sources(/소스·/가이드), rawItems(/최근수집), events(/행사), diagnostics(/점검), qa(멘션 질문 답변). 추후 공개 웹도 여기를 쓴다
   admin/                Express 라우트(/api/admin/*): 소스 상태, 키워드, 행사 검수, misses 기록
 web/                    관리 화면
 assets/                 공지 임베드 하단 지역 이미지(region-kr/jp/overseas.png, 800×400 투명 PNG). GitHub raw 주소로 참조
@@ -72,7 +76,7 @@ scripts/schema-diff.ts  docs/schema.sql과 마이그레이션 구조 비교 (npm
 docs/schema.sql         DDL 정본 (SQLite 3.53에서 검증 완료)
 docs/kopis.md           KOPIS 어댑터 명세 (원문 PDF는 docs/kopis/)
 docs/naver.md           네이버 검색(NAVER API HUB) 어댑터 명세
-seed/sources.json       소스 34개 (enabled=false 6개: URL·계정 또는 요청 형식 미확인)
+seed/sources.json       소스 35개 (enabled=false 5개: URL·계정 또는 요청 형식 미확인)
 seed/keywords.json      키워드 사전 (strong 22, weak 12, context 19, exclude 2)
 test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 수집, 일부는 명세 기반 예시라고 파일에 표시. kopis/, naver/는 명세 기반 예시)
 ```
@@ -91,6 +95,8 @@ test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 
     - 본문이 500자 미만인 html_diff·rss·ticket 항목이 키워드에서 떨어지면 원문 페이지로 한 번 더 판정한다. 행사 이름에 미쿠가 없고 출연진·타임테이블에만 있는 경우(예: 원더리벳 2026)를 잡기 위해서다.
     - API 일시 오류(429·529·5xx)는 원문을 pending으로 두고 다음 틱에, 키·요청 오류(400·401·403·404)는 파이프라인을 멈추고 관리자 경보.
 4. confidence가 0.7 미만이면 Sonnet으로 다시 판정한다(0.7은 초기값, 운영하며 조정). 그래도 낮으면 `needs_review=1`로 두고 알림을 보내지 않는다.
+    - 검수 대기 행사는 관리자 채널에 카드로 올린다(`event_discord.review_message_id`로 한 번만). [승인]은 `needs_review=0` + 새 행사 알림, [무시]는 `needs_review=2`.
+    - 확신 높은 출처가 같은 행사로 합쳐지면 1 → 0으로 풀고 새 행사로 알린다. 2(무시)는 풀지 않는다.
 5. 병합 키: `dedup_key = normalize(title) + start_date + venue`. 키가 같으면 `event_sources`만 추가한다. 필드가 바뀌면 `event_state_log`에 changed_fields를 남긴다.
     - 출처마다 제목 표기가 달라 키가 어긋나는 경우를 위해, 같은 지역·같은 시작일(또는 시작일 미정) 행사 중 제목 유사도(글자 2개 묶음 Jaccard)가 0.5 이상(장소가 같으면 0.3, 시작일 미정이면 0.6)인 행사에 합친다.
     - 기존 행사의 제목은 바꾸지 않는다. 장소·일정·티켓 정보는 새 값이 있으면 덮어쓴다.
@@ -103,6 +109,8 @@ test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 
     - ongoing, ended: 알림 없음
     - 중복 발송은 notifications의 유일 제약으로 막는다.
     - 일정·장소 변경 알림은 알림 조건과 함께 나중에 정한다. 지금은 로그만 남긴다.
+    - 매주 월요일 09:00 KST에 이번 주에 열리는 행사·이번 주 티켓 오픈·지난 7일 새 행사를 공지 채널에 요약한다(없으면 보내지 않음).
+    - 국내 확정 행사(발표·예매 예정·판매 중, 시작 전)는 디스코드 서버 예약 이벤트로도 만든다. 날짜만 있으므로 시작일 10:00~종료일 21:00(KST)로 넣고 설명에 표시용이라고 적는다. 취소되면 지운다. 봇 역할에 '이벤트 만들기' 권한이 필요하다(없으면 하루 한 번 경보).
 8. DB 시각은 UTC ISO 문자열이고, 디스코드 표시는 Asia/Seoul로 한다.
 9. 네이버 검색 어댑터는 `docs/naver.md`를 따른다(NAVER API HUB, HTTPS 전용, 429는 하루 한도 초과). 네이버 검색 결과는 새 글 감지용으로만 쓴다. LLM에는 원문 페이지를 다시 가져와 넘긴다. 약관상 서버 보관이 최대 21일이므로 `purge_after = fetched_at + 20일`로 두고 매일 삭제 작업을 돌린다.
 10. X 크롤링:
@@ -122,7 +130,7 @@ test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 
     - 상세의 예매처 목록(`relates`)은 `ticket_url`에 채운다.
     - KOPIS만으로 on_sale을 만들지 않는다.
 16. 첫 실행 처리: 기존 글이 전부 새 소식으로 잡히지 않도록 한다.
-    - html_diff: 첫 실행은 기준점만 기록하고 항목을 내지 않는다.
+    - html_diff: 첫 실행은 기준점만 기록하고 항목을 내지 않는다(links·text·json 모드 모두).
     - rss, x_crawl: 첫 실행은 최근 30일 글만 낸다.
     - naver: (검색어, 종류) 조합마다 첫 실행은 첫 페이지 중 최근 14일 글만 낸다. 날짜가 없는 카페글은 기준점만 잡는다.
     - ticket, kopis: 검색 결과가 미쿠 관련으로 좁혀져 있으므로 전부 낸다(지난 행사는 파이프라인에서 ended로 판정).
@@ -182,15 +190,16 @@ TZ=UTC
 1. 웹 열람 페이지
     - 사용자가 웹에서 행사 목록과 상세를 볼 수 있게 한다. UI/UX와 세부 기획은 미정이다.
     - 지금부터 지킬 것: 관리 화면과 관리 API는 `/admin`, `/api/admin/*`(Basic Auth) 아래에만 둔다. 공개 읽기 API(`/api/public/*`)와 공개 페이지 경로는 비워 둔다.
-2. 디스코드 봇 멘션 질의
-    - 봇을 멘션해 질문하면 DB의 행사 정보로 답한다(예: "이번 달 국내 미쿠 행사 뭐 있어?").
-    - 지금부터 지킬 것: 행사 조회 로직은 `src/services/`처럼 디스코드·웹과 분리된 곳에 두고, 슬래시 명령, 멘션 질의, 공개 API가 같은 함수를 쓰게 한다.
-    - 답변 생성에는 `events`와 공식 출처만 쓴다. 네이버 검색 결과(raw_items)는 약관상 AI 답변 생성에 쓸 수 없으므로 넣지 않는다.
+2. 디스코드 봇 멘션 질의 (구현됨: `services/qa.ts`, `notify/discord.ts`)
+    - 봇을 멘션해 질문하면 DB의 행사 정보로 답한다(예: "이번 달 국내 미쿠 행사 뭐 있어?"). Haiku, 같은 사람 15초에 한 번, 동시 2건, 호출 비용은 `llm_calls`(raw_item_id 없음).
+    - 행사 조회 로직은 `src/services/`에 두고, 슬래시 명령, 멘션 질의, 공개 API가 같은 함수를 쓴다.
+    - 답변 생성에는 `events`만 쓴다(확정 행사, 다가오는 것 + 최근 60일 안에 끝난 것). 네이버 검색 결과(raw_items)는 약관상 AI 답변 생성에 쓸 수 없으므로 넣지 않는다.
+    - 봇은 GuildMessages 인텐트만 쓴다. 봇을 멘션한 메시지는 MessageContent(특권) 없이도 본문이 온다.
 
 ## 아직 확인되지 않은 것
 
 - 인스타그램 대상 계정이 비즈니스·크리에이터 계정인지
-- AGF 공식 사이트 URL, 팝가 검색·목록 URL
+- 팝가 검색·목록 URL (AGF 공식 사이트는 www.agfkorea.com, 데이터 주소는 seed/sources.json에 기록)
 - 프로세카 한국 서버(운영사 뉴버스) 공식 계정, 매지컬플레이 공식 채널
 - NOL·YES24·티켓링크의 검색·티켓 오픈 공지 요청 형식 (멜론티켓은 확인 완료: 검색 GET, 오픈 소식 POST)
 - KOPIS: https 동작 여부, 오류 응답 형식, `afterdate`와 기간 파라미터를 같이 쓸 때의 동작, `relates` 하위 요소 구조
