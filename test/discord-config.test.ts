@@ -30,7 +30,7 @@ describe('디스코드 설정', () => {
 
 describe('/ping', () => {
   it('명령 정의: ping, 소스, 최근수집, 행사', () => {
-    expect(commandDefinitions.map((c) => c.name)).toEqual(['ping', '소스', '최근수집', '행사']);
+    expect(commandDefinitions.map((c) => c.name)).toEqual(['ping', '소스', '최근수집', '행사', '점검', '가이드']);
     const scopeOpt = (commandDefinitions[3] as { options?: { choices?: { value: string }[] }[] }).options![0]!;
     expect(scopeOpt.choices!.map((c) => c.value)).toEqual(['domestic', 'japan', 'overseas', 'all']);
   });

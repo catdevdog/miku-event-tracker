@@ -111,7 +111,7 @@ const kstDate = (d: Date) => new Date(d.getTime() + 9 * 3600_000).toISOString().
 export function systemPrompt(now: Date): string {
   return [
     '너는 하츠네 미쿠 관련 행사 정보를 정리하는 도우미다. 주어진 원문 하나를 읽고 record_event 도구로 결과를 기록한다.',
-    `오늘은 ${kstDate(now)} (한국 시각)이다. 연도가 없는 날짜는 오늘 이후로 가장 가까운 날짜로 해석한다.`,
+    `오늘은 ${kstDate(now)} (한국 시각)이다. 연도가 없는 날짜는 게시 시각(없으면 오늘) 이후로 가장 가까운 날짜로 해석한다. 지난 행사를 소개하는 글이면 지난 날짜를 그대로 쓴다.`,
     '',
     '판단 기준:',
     '- is_relevant: 하츠네 미쿠, 피아프로 캐릭터즈(카가미네 린·렌, 메구리네 루카, MEIKO, KAITO), 프로젝트 세카이가 등장하는 "참여·방문·구매할 수 있는 행사"면 true.',

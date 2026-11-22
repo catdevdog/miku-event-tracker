@@ -9,9 +9,11 @@ import { createApp } from './app.js';
 import { startDiscordBot, type DiscordBot } from './notify/discord.js';
 import { createWebhookSender } from './notify/webhook.js';
 import { createNotifier, dedupAlerter } from './notify/notifier.js';
-import { buildEventsReply, buildPingReply, buildRecentReply, buildSourcesReply } from './notify/commands.js';
+import { buildDiagnosticsReply, buildEventsReply, buildPingReply, buildRecentReply, buildSourcesReply } from './notify/commands.js';
+import { buildGuideReply } from './notify/guide.js';
+import { getDiagnostics } from './services/diagnostics.js';
 import { getServiceStatus } from './services/status.js';
-import { listSourceStatuses } from './services/sources.js';
+import { listCollectionPlan, listSourceStatuses } from './services/sources.js';
 import { listRecentRawItems } from './services/rawItems.js';
 import { listUpcomingEvents, parseEventScope } from './services/events.js';
 import { createPipelineRunner } from './pipeline/index.js';
@@ -71,6 +73,10 @@ if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID
           const scope = parseEventScope(ctx.getString('범위'));
           return buildEventsReply(await listUpcomingEvents(db, { scope }), scope);
         }
+        case '점검':
+          return buildDiagnosticsReply(await getDiagnostics(db));
+        case '가이드':
+          return buildGuideReply(await listCollectionPlan(db));
         default:
           return null;
       }

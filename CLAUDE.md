@@ -33,6 +33,7 @@ src/
   scheduler/            1분 틱으로 차례가 된 소스 실행(runner), job lock, boost 주기·X 지터 계산(due)
   adapters/
     types.ts            interface SourceAdapter { run(source, ctx): Promise<{ items: RawItemInput[]; state? }> }
+    implemented.ts      구현된 어댑터 이름(IMPLEMENTED_ADAPTERS). registry.ts가 같은 키로 만든다(타입 강제)
     registry.ts         구현된 어댑터 목록(createAdapters). 없는 어댑터의 소스는 job_runs에 skipped로 남는다
     http.ts             fetch 래퍼, 해시, 상태 목록 관리
     rss.ts              RSS 2.0·RSS 1.0(RDF)·Atom
@@ -50,14 +51,15 @@ src/
     state.ts            상태 계산(앞으로만 진행) + event_state_log
   notify/
     discord.ts          봇 클라이언트(로그인 재시도), 채널 발송, 슬래시 명령 처리
-    commands.ts         슬래시 명령 정의와 /ping 응답
+    commands.ts         슬래시 명령 정의와 응답 (/ping /소스 /최근수집 /행사 /점검)
+    guide.ts            /가이드 응답 (수집 주기·미수집 소스는 sources 설정에서 계산)
     notifier.ts         공지(봇 → 웹후크 순) · 관리자 경보(봇 → 콘솔, 30분 중복 억제)
     webhook.ts          공지 채널 웹후크 발송
     format.ts           2000자 자르기, KST 표시
     planner.ts          알림 임베드 생성, notifications 큐 적재, subscribers.filters 매칭, 기본 구독자(공지 채널)
     reminders.ts        ticket_open_at 기준 T-24h, T-1h
     sender.ts           큐 발송 (공지 채널은 봇 → 웹후크, 실패 시 3회까지 재시도)
-  services/             공용 조회 로직: status(상태), sources(/소스), rawItems(/최근수집), events(/행사). 추후 멘션 질의·공개 웹도 여기를 쓴다
+  services/             공용 조회 로직: status(상태), sources(/소스·/가이드), rawItems(/최근수집), events(/행사), diagnostics(/점검). 추후 멘션 질의·공개 웹도 여기를 쓴다
   admin/                Express 라우트(/api/admin/*): 소스 상태, 키워드, 행사 검수, misses 기록
 web/                    관리 화면
 assets/                 공지 임베드 하단 지역 이미지(region-kr/jp/overseas.png, 800×400 투명 PNG). GitHub raw 주소로 참조
@@ -67,7 +69,7 @@ docs/schema.sql         DDL 정본 (SQLite 3.53에서 검증 완료)
 docs/kopis.md           KOPIS 어댑터 명세 (원문 PDF는 docs/kopis/)
 docs/naver.md           네이버 검색(NAVER API HUB) 어댑터 명세
 seed/sources.json       소스 34개 (enabled=false 6개: URL·계정 또는 요청 형식 미확인)
-seed/keywords.json      키워드 사전 (strong 22, weak 12, context 15, exclude 2)
+seed/keywords.json      키워드 사전 (strong 22, weak 12, context 19, exclude 2)
 test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 수집, 일부는 명세 기반 예시라고 파일에 표시)
 ```
 

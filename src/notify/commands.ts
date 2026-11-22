@@ -3,6 +3,7 @@ import type { ServiceStatus } from '../services/status.js';
 import type { SourceStatusRow } from '../services/sources.js';
 import type { RecentRawItem } from '../services/rawItems.js';
 import type { EventScope } from '../services/events.js';
+import type { Diagnostics, SourceFunnelRow } from '../services/diagnostics.js';
 import type { EventRow } from '../pipeline/merge.js';
 import { formatKst, textTable } from './format.js';
 import type { OutgoingMessage } from './types.js';
@@ -27,6 +28,8 @@ export const commandDefinitions = [
         ),
     )
     .toJSON(),
+  new SlashCommandBuilder().setName('점검').setDescription('지역별 행사 수와 국내 수집처 단계별 건수').toJSON(),
+  new SlashCommandBuilder().setName('가이드').setDescription('봇 이용법, 수집 주기, 알림 시점 안내').toJSON(),
 ];
 
 export interface PingInfo {
@@ -136,3 +139,70 @@ export function buildEventsReply(rows: EventRow[], scope: EventScope = 'all'): O
   };
 }
 
+
+const STATUS_ALL: Record<string, string> = { ...STATUS2, ended: '종료', cancelled: '취소' };
+
+// 상태 열은 다른 표와 같이 2글자: 준비(어댑터 구현 전), 꺼짐(주소·형식 미확인)
+const FUNNEL_STATE = (r: SourceFunnelRow) =>
+  !r.schedulable
+    ? '꺼짐'
+    : !r.implemented
+      ? '준비'
+      : r.consecutiveFailures >= 3
+        ? '경보'
+        : r.consecutiveFailures > 0
+          ? '실패'
+          : r.lastSuccessAt
+            ? '정상'
+            : '대기';
+
+export function buildDiagnosticsReply(d: Diagnostics): OutgoingMessage {
+  const regionTable = textTable(
+    ['지역', '다가옴', '종료', '취소', '검수'],
+    d.regions.map((r) => [REGION2[r.region] ?? r.region, String(r.upcoming), String(r.ended), String(r.cancelled), String(r.needsReview)]),
+  );
+  const recent = d.recentKr.length
+    ? textTable(
+        ['상태', '날짜', '행사'],
+        d.recentKr.map((e) => [e.needsReview ? '검수' : (STATUS_ALL[e.status] ?? '기타'), shortDate(e.startDate, e.endDate), e.title]),
+        48,
+      )
+    : '아직 국내 행사로 등록된 것이 없습니다.';
+
+  const kr = d.krSources;
+  const running = kr.filter((r) => r.schedulable && r.implemented);
+  const sum = (k: 'collected' | 'passed' | 'extracted' | 'linked') => kr.reduce((a, r) => a + r[k], 0);
+  const sourceTable = textTable(
+    ['상태', '수집', '통과', '추출', '행사', '소스'],
+    kr.map((r) => [FUNNEL_STATE(r), String(r.collected), String(r.passed), String(r.extracted), String(r.linked), r.name.replace(/\s*\([^)]*\)\s*$/, '')]),
+    30,
+  );
+
+  return {
+    embeds: [
+      {
+        title: '🩺 점검 · 행사 현황',
+        description: [
+          regionTable,
+          '다가옴: 발표 · 예정 · 판매 · 진행 (검수 대기 제외) · 검수: 확신이 낮아 알림을 보내지 않은 행사',
+          '',
+          '**최근 국내 행사** (종료 포함, 최근 갱신 순)',
+          recent,
+        ].join('\n'),
+        color: COLOR.info,
+      },
+      {
+        title: '🩺 점검 · 국내 수집처',
+        description: [
+          `실제로 수집 중인 국내 수집처 **${running.length}/${kr.length}곳**`,
+          `가져온 글 ${sum('collected')} → 키워드 통과 ${sum('passed')} → Claude 판정 ${sum('extracted')} → 행사 연결 ${sum('linked')}`,
+          sourceTable,
+          '준비: 어댑터 구현 전 · 꺼짐: 주소나 요청 형식 미확인 · 경보: 3회 이상 연속 실패',
+          '사이트 변경 감지는 처음 볼 때 기준만 잡으므로 수집 0건이 정상일 수 있어요.',
+        ].join('\n'),
+        color: running.length < kr.length ? COLOR.warn : COLOR.info,
+        footer: { text: `전체 판정 대기 ${d.pendingItems}건 · 판정 오류 ${d.errorItems}건` },
+      },
+    ],
+  };
+}
