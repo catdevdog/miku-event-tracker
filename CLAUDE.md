@@ -10,7 +10,7 @@
 
 | 영역 | 선택 |
 | --- | --- |
-| 런타임 | Node.js 24 LTS (discord.js 최신 문서 요구 사항 24.17 이상), TypeScript, ESM |
+| 런타임 | Node.js 24.17 이상 (discord.js 요구 사항), TypeScript, ESM. 로컬 개발은 Node 24, 배포 이미지(Playwright v1.65.1)는 Node 26 |
 | 서버 | Express. 관리 API와 관리 화면 정적 파일을 같은 프로세스에서 제공 |
 | 관리 화면 | React + Vite (`web/`) |
 | 스케줄러 | node-cron (프로세스 안). `job_locks` 테이블로 같은 작업의 중복 실행 방지 |
@@ -18,7 +18,7 @@
 | 수집 | `rss-parser`, `fetch` + `cheerio`, `playwright`(컨테이너 안 chromium), `@the-convocation/twitter-scraper`(X), 인스타그램 Graph API Business Discovery, KOPIS 오픈API(XML 응답, `fast-xml-parser`), 네이버 검색 API(API HUB) |
 | LLM | `@anthropic-ai/sdk`. 기본 `claude-haiku-5-5`, 확신도가 낮을 때만 `claude-sonnet-5-5`. tool use로 JSON 스키마 강제 |
 | 알림 | discord.js v14 봇. 공지 채널, 관리자 경보 채널, DM, 슬래시 명령 |
-| 배포 | Railway Hobby, Docker 1개 (Playwright 공식 이미지 기반, Node 24 확인), 볼륨 `/data` |
+| 배포 | Railway Hobby, Docker 1개 (Playwright 공식 이미지 기반), 볼륨 `/data`. 헬스체크 경로 `/health`는 Railway 대시보드에서 설정한다(railway.json 같은 Config as Code는 Railway에서 폐기 예정이라 쓰지 않음) |
 | 개발 | NAS DevBox. 단 DevBox 컨테이너에는 chromium을 설치할 수 없으므로 Playwright 어댑터는 로컬 PC나 Railway에서 테스트 |
 
 ## 디렉터리 구조
@@ -30,9 +30,10 @@ src/
   db/schema.ts          drizzle 스키마. docs/schema.sql과 1:1로 맞춘다
   db/client.ts
   db/seed.ts            seed/*.json을 sources·keywords에 upsert (name, term 기준)
-  scheduler/            cron 등록, job lock, boost 주기 계산
+  scheduler/            1분 틱으로 차례가 된 소스 실행(runner), job lock, boost 주기·X 지터 계산(due)
   adapters/
-    types.ts            interface SourceAdapter { run(source): Promise<RawItemInput[]> }
+    types.ts            interface SourceAdapter { run(source, ctx): Promise<{ items: RawItemInput[]; state? }> }
+    registry.ts         구현된 어댑터 목록. 없는 어댑터의 소스는 job_runs에 skipped로 남는다
     rss.ts  htmlDiff.ts  playwright.ts  xCrawl.ts  instagram.ts  kopis.ts  naver.ts
   pipeline/
     keywordFilter.ts    keywords 테이블 기반 판정
@@ -46,6 +47,8 @@ src/
   services/             행사 조회 등 공용 로직 (디스코드 명령, 관리 화면, 추후 공개 웹이 같이 씀)
   admin/                Express 라우트(/api/admin/*): 소스 상태, 키워드, 행사 검수, misses 기록
 web/                    관리 화면
+drizzle/                마이그레이션 (npm run db:generate로 생성)
+scripts/schema-diff.ts  docs/schema.sql과 마이그레이션 구조 비교 (npm run db:diff, test/schema.test.ts)
 docs/schema.sql         DDL 정본 (SQLite 3.53에서 검증 완료)
 docs/kopis.md           KOPIS 어댑터 명세 (원문 PDF는 docs/kopis/)
 docs/naver.md           네이버 검색(NAVER API HUB) 어댑터 명세
