@@ -29,7 +29,7 @@ const schema = z.object({
     z.coerce.number().int().positive().default(3000),
   ),
 
-  // ── 이후 단계에서 필수로 바꾼다 ──
+  // ── 기능별 선택 값 (디스코드는 아래 superRefine에서 묶음 검증) ──
   TURSO_AUTH_TOKEN: optionalString,
   ANTHROPIC_API_KEY: optionalString,
   DISCORD_BOT_TOKEN: optionalString,
@@ -37,7 +37,7 @@ const schema = z.object({
   DISCORD_GUILD_ID: optionalString,
   DISCORD_NOTICE_CHANNEL_ID: optionalString,
   DISCORD_ADMIN_CHANNEL_ID: optionalString,
-  // 선택: 공지 채널 웹후크. 봇과 같이 쓸지는 2단계에서 정한다.
+  // 선택: 공지 채널 웹후크. 봇이 준비되지 않았거나 발송에 실패하면 공지를 이쪽으로 보낸다.
   DISCORD_NOTICE_WEBHOOK_URL: optionalString,
   KOPIS_SERVICE_KEY: optionalString,
   NAVER_CLIENT_ID: optionalString,
@@ -46,6 +46,23 @@ const schema = z.object({
   X_CT0: optionalString,
   IG_USER_ID: optionalString,
   IG_ACCESS_TOKEN: optionalString,
+});
+
+const SNOWFLAKE = /^\d{17,20}$/;
+const WEBHOOK_URL = /^https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/;
+
+/** 디스코드 봇은 토큰을 넣으면 켜진다. 토큰이 있으면 앱·서버·채널 ID도 모두 있어야 한다. */
+const refined = schema.superRefine((c, ctx) => {
+  if (c.DISCORD_BOT_TOKEN) {
+    for (const key of ['DISCORD_APP_ID', 'DISCORD_GUILD_ID', 'DISCORD_NOTICE_CHANNEL_ID', 'DISCORD_ADMIN_CHANNEL_ID'] as const) {
+      const v = c[key];
+      if (!v) ctx.addIssue({ code: 'custom', path: [key], message: `DISCORD_BOT_TOKEN이 있으면 ${key}도 필요합니다` });
+      else if (!SNOWFLAKE.test(v)) ctx.addIssue({ code: 'custom', path: [key], message: `${key}는 숫자 ID여야 합니다` });
+    }
+  }
+  if (c.DISCORD_NOTICE_WEBHOOK_URL && !WEBHOOK_URL.test(c.DISCORD_NOTICE_WEBHOOK_URL)) {
+    ctx.addIssue({ code: 'custom', path: ['DISCORD_NOTICE_WEBHOOK_URL'], message: '디스코드 웹후크 URL 형식이 아닙니다' });
+  }
 });
 
 export type Config = z.infer<typeof schema>;
@@ -59,7 +76,7 @@ export class ConfigError extends Error {
 
 /** 환경 변수를 검증한다. 오류 메시지에는 키 이름만 넣고 값은 넣지 않는다. */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const result = schema.safeParse(env);
+  const result = refined.safeParse(env);
   if (!result.success) {
     throw new ConfigError(result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`));
   }

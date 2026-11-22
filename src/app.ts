@@ -1,13 +1,16 @@
 import express, { type Express, type RequestHandler } from 'express';
 import { timingSafeEqual } from 'node:crypto';
-import { desc, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import type { Db } from './db/client.js';
-import { jobRuns, sources } from './db/schema.js';
+import { sources } from './db/schema.js';
+import { getServiceStatus } from './services/status.js';
 
 export interface AppDeps {
   db: Db;
   adminBasicAuth: string;
   startedAt: Date;
+  /** 디스코드 봇 상태: disabled | connecting | ready | error | stopped */
+  discordState?: () => string;
 }
 
 function safeEqual(a: string, b: string): boolean {
@@ -27,7 +30,7 @@ export function basicAuth(expected: string): RequestHandler {
   };
 }
 
-export function createApp({ db, adminBasicAuth, startedAt }: AppDeps): Express {
+export function createApp({ db, adminBasicAuth, startedAt, discordState = () => 'disabled' }: AppDeps): Express {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json());
@@ -36,11 +39,14 @@ export function createApp({ db, adminBasicAuth, startedAt }: AppDeps): Express {
   app.get('/health', async (_req, res) => {
     try {
       await db.run(sql`SELECT 1`);
-      const [last] = await db.select({ startedAt: jobRuns.startedAt }).from(jobRuns).orderBy(desc(jobRuns.startedAt)).limit(1);
+      const status = await getServiceStatus(db);
+      // 디스코드가 끊겨도 수집은 계속되므로 200을 유지하고 상태만 알린다.
       res.json({
         status: 'ok',
         db: 'ok',
-        lastJobRunAt: last?.startedAt ?? null,
+        discord: discordState(),
+        lastJobRunAt: status.lastJobRunAt,
+        failingSources: status.failingSources.length,
         uptimeSec: Math.round((Date.now() - startedAt.getTime()) / 1000),
       });
     } catch {

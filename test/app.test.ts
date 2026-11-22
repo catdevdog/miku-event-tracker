@@ -24,7 +24,7 @@ describe('HTTP', () => {
   it('/health는 인증 없이 200', async () => {
     const res = await fetch(`${base}/health`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ status: 'ok', db: 'ok', lastJobRunAt: null });
+    expect(await res.json()).toMatchObject({ status: 'ok', db: 'ok', discord: 'disabled', lastJobRunAt: null, failingSources: 0 });
   });
 
   it('/api/admin은 Basic Auth가 없으면 401, 맞으면 200', async () => {

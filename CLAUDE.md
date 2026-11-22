@@ -17,7 +17,7 @@
 | DB | SQLite. `@libsql/client` + `drizzle-orm/libsql`. `DATABASE_URL=file:/data/tracker.db` (Railway 볼륨). Turso로 옮길 때는 URL과 토큰만 교체 |
 | 수집 | `rss-parser`, `fetch` + `cheerio`, `playwright`(컨테이너 안 chromium), `@the-convocation/twitter-scraper`(X), 인스타그램 Graph API Business Discovery, KOPIS 오픈API(XML 응답, `fast-xml-parser`), 네이버 검색 API(API HUB) |
 | LLM | `@anthropic-ai/sdk`. 기본 `claude-haiku-5-5`, 확신도가 낮을 때만 `claude-sonnet-5-5`. tool use로 JSON 스키마 강제 |
-| 알림 | discord.js v14 봇. 공지 채널, 관리자 경보 채널, DM, 슬래시 명령 |
+| 알림 | discord.js v14 봇. 공지 채널, 관리자 경보 채널, DM, 슬래시 명령. 봇이 준비 전이거나 발송에 실패하면 공지는 웹후크(`DISCORD_NOTICE_WEBHOOK_URL`, 선택)로 보낸다. 관리자 경보는 웹후크로 보내지 않는다 |
 | 배포 | Railway Hobby, Docker 1개 (Playwright 공식 이미지 기반), 볼륨 `/data`. 헬스체크 경로 `/health`는 Railway 대시보드에서 설정한다(railway.json 같은 Config as Code는 Railway에서 폐기 예정이라 쓰지 않음) |
 | 개발 | NAS DevBox. 단 DevBox 컨테이너에는 chromium을 설치할 수 없으므로 Playwright 어댑터는 로컬 PC나 Railway에서 테스트 |
 
@@ -41,7 +41,11 @@ src/
     merge.ts            dedup_key 생성, 병합, parent_event_id 연결
     state.ts            상태 전이 + event_state_log
   notify/
-    discord.ts          봇 클라이언트, 발송, 슬래시 명령
+    discord.ts          봇 클라이언트(로그인 재시도), 채널 발송, 슬래시 명령 처리
+    commands.ts         슬래시 명령 정의와 /ping 응답
+    notifier.ts         공지(봇 → 웹후크 순) · 관리자 경보(봇 → 콘솔, 30분 중복 억제)
+    webhook.ts          공지 채널 웹후크 발송
+    format.ts           2000자 자르기, KST 표시
     planner.ts          notifications 생성, subscribers.filters 매칭
     reminders.ts        ticket_open_at 기준 T-24h, T-1h
   services/             행사 조회 등 공용 로직 (디스코드 명령, 관리 화면, 추후 공개 웹이 같이 씀)
@@ -98,11 +102,12 @@ seed/keywords.json      키워드 사전 (strong 21, weak 12, context 15, exclud
 DATABASE_URL=file:/data/tracker.db
 TURSO_AUTH_TOKEN=                 # Turso로 옮길 때만
 ANTHROPIC_API_KEY=                # Max 크레딧이 연결된 Console 조직에서 발급
-DISCORD_BOT_TOKEN=
+DISCORD_BOT_TOKEN=                # 있으면 봇을 켠다. 이때 아래 4개 ID도 필수
 DISCORD_APP_ID=
 DISCORD_GUILD_ID=
 DISCORD_NOTICE_CHANNEL_ID=
 DISCORD_ADMIN_CHANNEL_ID=
+DISCORD_NOTICE_WEBHOOK_URL=       # 선택. 공지 채널 웹후크 (커밋 금지)
 KOPIS_SERVICE_KEY=
 NAVER_CLIENT_ID=                  # NAVER API HUB Client ID → 헤더 X-NCP-APIGW-API-KEY-ID
 NAVER_CLIENT_SECRET=              # NAVER API HUB Client Secret → 헤더 X-NCP-APIGW-API-KEY
