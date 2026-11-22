@@ -8,7 +8,7 @@ import type { Notifier } from './notifier.js';
 import { postPendingReviews } from './review.js';
 import { syncGuildEvents } from './guildEvents.js';
 import { weeklyData, weeklyMessage } from './weekly.js';
-import { ensureSubscriptionSetup, syncDefaultMembers } from './subscriptions.js';
+import { MemberListError, ROLE_NAME, ensureSubscriptionSetup, syncDefaultMembers, type MemberSyncResult } from './subscriptions.js';
 import { syncStatusBoard } from './statusBoard.js';
 import { resolveReports } from './reports.js';
 
@@ -50,28 +50,45 @@ export function createDiscordJobs(deps: DiscordJobsDeps) {
     await deps.alerter.alert(text);
   }
 
-  /** 알림 역할·구독 패널 → 기본 구독(국내 역할 일괄) → 권한 점검 */
-  async function setup() {
+  /** 알림 역할·구독 패널 → 역할 순서 점검 → 기본 구독(국내 역할 일괄) → 권한 점검. 동시에 두 번 돌지 않는다(/관리 설정과 주기 작업) */
+  let setupRunning: ReturnType<typeof runSetup> | undefined;
+  function setup() {
+    setupRunning ??= runSetup().finally(() => (setupRunning = undefined));
+    return setupRunning;
+  }
+  async function runSetup() {
     const bot = deps.bot();
     if (!bot?.isReady() || !deps.noticeChannelId) return null;
     const r = await ensureSubscriptionSetup(deps.db, bot, deps.noticeChannelId, now());
     for (const e of r.errors) await dailyAlert(e.split(':')[0]!, e);
-    let members: { added: number; initialized: number } | null = null;
-    if (r.roles.KR) {
+
+    // 봇은 자기 역할보다 아래 있는 역할만 줄 수 있다
+    const above = await bot.rolesNotBelowBot(Object.values(r.roles)).catch(() => [] as string[]);
+    if (above.length) {
+      r.errors.push(`봇 역할이 ${above.join(', ')}보다 아래에 있어 역할을 줄 수 없습니다. 서버 설정 → 역할에서 봇 역할을 끌어서 알림 역할들 위로 올려 주세요.`);
+      await dailyAlert('order', r.errors.at(-1)!);
+    }
+
+    let members: MemberSyncResult | null = null;
+    let memberError: string | undefined;
+    if (r.roles.KR && above.length === 0) {
       try {
         members = await syncDefaultMembers(deps.db, bot, now());
-        if (members.added > 0) log.log(`기본 구독: 국내 알림 역할 ${members.added}명에게 부여`);
+        if (members.added > 0) log.log(`기본 구독: ${ROLE_NAME.KR} 역할 ${members.added}명에게 부여`);
+        if (members.failed > 0) {
+          memberError = `${members.failed}명에게 ${ROLE_NAME.KR} 역할을 주지 못했습니다: ${members.lastError}. 봇 역할에 "역할 관리"가 있는지, 봇 역할이 알림 역할들보다 위인지 확인해 주세요.`;
+        }
       } catch (err) {
-        await dailyAlert(
-          'members',
-          `멤버에게 국내 알림 역할을 주지 못했습니다: ${err instanceof Error ? err.message : String(err)}\n` +
-            'Developer Portal → 앱 → Bot → Privileged Gateway Intents에서 **Server Members Intent**를 켜야 멤버 목록을 읽을 수 있고, 봇 역할이 알림 역할들보다 위에 있어야 합니다.',
-        );
+        memberError =
+          err instanceof MemberListError
+            ? `멤버 목록을 읽지 못해 ${ROLE_NAME.KR} 역할을 줄 수 없습니다: ${err.message}\nDeveloper Portal → 앱 → Bot → Privileged Gateway Intents에서 **Server Members Intent**를 켜고 저장한 뒤 \`/관리 설정\`을 다시 실행해 주세요.`
+            : `기본 구독 실패: ${err instanceof Error ? err.message : String(err)}`;
       }
+      if (memberError) await dailyAlert('members', memberError);
     }
     const missing = await bot.missingPermissions(deps.noticeChannelId).catch(() => [] as string[]);
     if (missing.length) await dailyAlert('perm', `봇 역할에 권한이 부족합니다: ${missing.join(', ')}. 서버 설정 → 역할 → 봇 역할에서 켜 주세요.`);
-    return { ...r, members, missing };
+    return { ...r, members, memberError, missing };
   }
 
   async function statusBoard() {

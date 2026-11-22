@@ -11,11 +11,12 @@ import { ensureDefaultSubscriber, planForChange, planNotifications } from '../sr
 import { sendQueued } from '../src/notify/sender.js';
 import { withRoleMention, type InteractionCtx } from '../src/notify/discord.js';
 import { deliverNotice, threadName, withoutImages } from '../src/notify/noticeThreads.js';
-import { ensureSubscriptionSetup, panelMessage, parseSubId, syncDefaultMembers, toggleSubscription } from '../src/notify/subscriptions.js';
+import { MemberListError, ensureSubscriptionSetup, panelMessage, parseSubId, syncDefaultMembers, toggleSubscription } from '../src/notify/subscriptions.js';
 import { parseWatchId, toggleWatch } from '../src/notify/watchers.js';
 import { createReport, firstUrl, resolveReports } from '../src/notify/reports.js';
 import { statusBoardData, statusBoardMessage, syncStatusBoard } from '../src/notify/statusBoard.js';
 import { createInteractionHandlers } from '../src/notify/interactions.js';
+import { createDiscordJobs } from '../src/notify/discordJobs.js';
 import { addKeyword, editEvent, eventChoices, mergeEvents, parseEventEdit, removeKeyword, sourceAction } from '../src/services/admin.js';
 import { SETTING, getSetting, isNotifyPaused, setSetting } from '../src/services/settings.js';
 import { getEventDetail } from '../src/services/events.js';
@@ -99,11 +100,28 @@ describe('알림 역할 구독 (국내 기본)', () => {
         { id: 'bot', bot: true, roles: [] },
       ]),
     });
-    expect(await syncDefaultMembers(t.db, bot, NOW)).toEqual({ added: 1, initialized: 2 });
+    expect(await syncDefaultMembers(t.db, bot, NOW)).toEqual({ added: 1, initialized: 2, failed: 0 });
     expect(bot.addMemberRole).toHaveBeenCalledWith('a', 'kr');
     // 'a'가 국내를 껐어도 다시 주지 않는다
-    expect(await syncDefaultMembers(t.db, bot, NOW)).toEqual({ added: 0, initialized: 0 });
-    expect(await syncDefaultMembers(t.db, fakeBot({ listMembers: vi.fn(async () => [{ id: 'c', bot: false, roles: [] }, { id: 'd', bot: false, roles: [] }]) }), NOW, 1)).toEqual({ added: 1, initialized: 1 });
+    expect(await syncDefaultMembers(t.db, bot, NOW)).toEqual({ added: 0, initialized: 0, failed: 0 });
+    expect(await syncDefaultMembers(t.db, fakeBot({ listMembers: vi.fn(async () => [{ id: 'c', bot: false, roles: [] }, { id: 'd', bot: false, roles: [] }]) }), NOW, 1)).toEqual({ added: 1, initialized: 1, failed: 0 });
+  });
+
+  it('한 명이 실패해도 나머지는 계속하고, 실패한 사람은 다음에 다시 시도한다', async () => {
+    await setSetting(t.db, SETTING.role('KR'), 'kr');
+    const add = vi.fn(async (id: string) => (id === 'owner' ? Promise.reject(apiError(50013)) : undefined));
+    const list = vi.fn(async () => [{ id: 'owner', bot: false, roles: [] }, { id: 'x', bot: false, roles: [] }]);
+    const r = await syncDefaultMembers(t.db, fakeBot({ listMembers: list, addMemberRole: add }), NOW);
+    expect(r).toMatchObject({ added: 1, initialized: 1, failed: 1 });
+    expect(r.lastError).toContain('50013');
+    await syncDefaultMembers(t.db, fakeBot({ listMembers: list, addMemberRole: add }), NOW);
+    expect(add.mock.calls.filter((c) => c[0] === 'owner')).toHaveLength(2);
+    // 처음 3명이 모두 실패하면 멈춘다
+    const allFail = vi.fn(async () => Promise.reject(apiError(50013)));
+    const many = vi.fn(async () => ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, bot: false, roles: [] })));
+    expect((await syncDefaultMembers(t.db, fakeBot({ listMembers: many, addMemberRole: allFail }), NOW)).failed).toBe(3);
+    // 멤버 목록을 못 읽으면 구분되는 오류
+    await expect(syncDefaultMembers(t.db, fakeBot({ listMembers: vi.fn(async () => Promise.reject(apiError(50001))) }), NOW)).rejects.toBeInstanceOf(MemberListError);
   });
 
   it('버튼으로 켜고 끈다. 직접 바꾼 사람은 기본 구독 대상에서 빠진다', async () => {
@@ -127,6 +145,41 @@ describe('알림 역할 구독 (국내 기본)', () => {
     expect(m.card![0]).toEqual({ type: 10, content: '<@&kr>' });
     expect(m.content).toBe('<@&kr>\n본문');
     expect(withRoleMention({ content: 'x' }, undefined)).toEqual({ content: 'x' });
+  });
+});
+
+describe('설정 점검 (/관리 설정)', () => {
+  const jobsWith = (over: Record<string, unknown>) => {
+    const alerts: string[] = [];
+    const bot = fakeBot({ missingPermissions: vi.fn(async () => []), rolesNotBelowBot: vi.fn(async () => []), ...over });
+    const jobs = createDiscordJobs({
+      db: t.db, bot: () => bot as never, notifier: notifier(), alerter: { alert: async (m: string) => void alerts.push(m) },
+      noticeChannelId: NOTICE, adminChannelId: 'admin', now: () => NOW, log: { log() {}, warn() {}, error() {} },
+    });
+    return { jobs, bot, alerts };
+  };
+
+  it('멤버 목록을 못 읽으면 Server Members Intent 안내를 돌려준다', async () => {
+    const { jobs, alerts } = jobsWith({ listMembers: vi.fn(async () => Promise.reject(Object.assign(new Error('Missing Access'), { code: 50001 }))) });
+    const r = await jobs.setup();
+    expect(r!.memberError).toContain('Server Members Intent');
+    expect(r!.memberError).toContain('Missing Access (50001)');
+    expect(alerts.some((a) => a.includes('Server Members Intent'))).toBe(true);
+  });
+
+  it('봇 역할이 알림 역할보다 아래면 부여를 시도하지 않고 순서를 바꾸라고 알린다', async () => {
+    const { jobs, bot } = jobsWith({ rolesNotBelowBot: vi.fn(async () => ['국내 행사 알림']) });
+    const r = await jobs.setup();
+    expect(r!.errors.join('\n')).toContain('봇 역할을 끌어서 알림 역할들 위로');
+    expect(bot.listMembers).not.toHaveBeenCalled();
+  });
+
+  it('정상이면 멤버에게 국내 역할을 준다 (동시에 불러도 한 번만 실행)', async () => {
+    const { jobs, bot } = jobsWith({ listMembers: vi.fn(async () => [{ id: 'a', bot: false, roles: [] }]) });
+    const [r1, r2] = await Promise.all([jobs.setup(), jobs.setup()]);
+    expect(r1).toBe(r2);
+    expect(r1!.members).toMatchObject({ added: 1 });
+    expect(bot.addMemberRole).toHaveBeenCalledTimes(1);
   });
 });
 

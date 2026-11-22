@@ -120,42 +120,74 @@ export async function ensureSubscriptionSetup(
   return result;
 }
 
+/** 멤버 목록을 읽지 못함 (대부분 Developer Portal의 Server Members Intent가 꺼져 있음) */
+export class MemberListError extends Error {}
+
+export interface MemberSyncResult {
+  added: number;
+  initialized: number;
+  /** 역할을 주지 못한 멤버 수 (다음 실행에 다시 시도) */
+  failed: number;
+  lastError?: string;
+}
+
+const errMsg = (err: unknown) => {
+  const code = discordErrorCode(err);
+  return `${err instanceof Error ? err.message : String(err)}${code ? ` (${code})` : ''}`;
+};
+
 /**
  * 기본 구독: 아직 기본 역할을 받은 적 없는 멤버에게 국내 알림 역할을 준다. 봇 계정은 뺀다.
  * 한 번에 cap명까지 주고 나머지는 다음 실행(10분 뒤)에 이어서 한다.
- * 멤버 목록 읽기는 Developer Portal의 Server Members Intent가 켜져 있어야 한다.
+ * 한 명이 실패해도 나머지는 계속하고(실패한 사람은 기록하지 않아 다음에 다시 시도), 처음 3명이 모두 실패하면
+ * 권한 문제로 보고 멈춘다. 멤버 목록 읽기는 Developer Portal의 Server Members Intent가 켜져 있어야 한다.
  */
 export async function syncDefaultMembers(
   db: Db,
   bot: Pick<DiscordBot, 'listMembers' | 'addMemberRole'>,
   now = new Date(),
   cap = 200,
-): Promise<{ added: number; initialized: number }> {
+): Promise<MemberSyncResult> {
   const ids = await roleIds(db);
   const defaults = DEFAULT_REGIONS.map((r) => ids[r]).filter((x): x is string => !!x);
-  if (defaults.length === 0) return { added: 0, initialized: 0 };
+  const result: MemberSyncResult = { added: 0, initialized: 0, failed: 0 };
+  if (defaults.length === 0) return result;
   const done = new Set((await db.select({ id: discordMembers.userId }).from(discordMembers)).map((r) => r.id));
-  let added = 0;
-  let initialized = 0;
   let after: string | undefined;
   for (let page = 0; page < 50; page++) {
-    const members = await bot.listMembers(after);
+    let members;
+    try {
+      members = await bot.listMembers(after);
+    } catch (err) {
+      throw new MemberListError(errMsg(err));
+    }
     for (const m of members) {
       if (m.bot || done.has(m.id)) continue;
       const missing = defaults.filter((r) => !m.roles.includes(r));
-      if (added + missing.length > cap) return { added, initialized };
+      if (result.added + missing.length > cap) return result;
+      let ok = true;
       for (const roleId of missing) {
-        await bot.addMemberRole(m.id, roleId);
-        added++;
+        try {
+          await bot.addMemberRole(m.id, roleId);
+          result.added++;
+        } catch (err) {
+          ok = false;
+          result.failed++;
+          result.lastError = errMsg(err);
+        }
+      }
+      if (!ok) {
+        if (result.failed >= 3 && result.added === 0) return result; // 전부 실패: 권한·역할 순서 문제
+        continue;
       }
       await db.insert(discordMembers).values({ userId: m.id, initializedAt: now.toISOString() }).onConflictDoNothing();
       done.add(m.id);
-      initialized++;
+      result.initialized++;
     }
     if (members.length < 1000) break;
     after = members[members.length - 1]!.id;
   }
-  return { added, initialized };
+  return result;
 }
 
 /** 현재 구독 상태 한 줄: 🇰🇷 국내 ✅ · 🇯🇵 일본 ⬜ · 🌏 해외 ⬜ */
@@ -180,9 +212,11 @@ export async function toggleSubscription(
     if (has) await bot.removeMemberRole(ctx.userId, roleId);
     else await bot.addMemberRole(ctx.userId, roleId);
   } catch (err) {
-    if (discordErrorCode(err) === 50013) {
-      return '봇이 이 역할을 줄 수 없어요. 서버 설정 → 역할에서 봇 역할을 알림 역할들보다 위로 올려야 해요. 관리자에게 알려 주세요.';
+    const code = discordErrorCode(err);
+    if (code === 50013 || code === 50001) {
+      return `봇이 이 역할을 줄 수 없어요 (${code}). 서버 설정 → 역할에서 봇 역할에 "역할 관리"를 켜고, 봇 역할을 알림 역할들보다 위로 올려야 해요. 관리자에게 알려 주세요.`;
     }
+    if (code === 10011) return '알림 역할이 지워졌어요. 관리자가 `/관리 설정`을 실행하면 다시 만들어져요.';
     throw err;
   }
   // 직접 바꾼 사람은 기본 구독 대상에서 뺀다 (국내를 끈 사람에게 다시 주지 않게)

@@ -99,6 +99,7 @@ if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID
       const kr = all.filter((e) => e.region === 'KR').length;
       return `🎤 다가오는 미쿠 행사 ${all.length}건 (국내 ${kr}) · /가이드`;
     },
+    onError: (where, err) => alerter.alert(`${where} 처리 실패: ${err instanceof Error ? err.message : String(err)}`.slice(0, 1500)),
     onReady: async () => {
       const commit = process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7);
       await notifier.alerter.alert(`서비스 시작${commit ? ` (커밋 ${commit})` : ''}`);

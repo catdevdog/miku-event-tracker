@@ -50,7 +50,7 @@ export interface InteractionDeps {
   notifyPausedEnv?: boolean;
   uptimeSec: () => number;
   /** /관리 설정: 역할·패널·상태판을 지금 다시 맞춘다 */
-  setupNow?: () => Promise<{ missing?: string[]; members?: { added: number } | null; errors?: string[] } | null>;
+  setupNow?: () => Promise<{ missing?: string[]; members?: { added: number; initialized: number; failed: number } | null; memberError?: string; errors?: string[] } | null>;
   now?: () => Date;
 }
 
@@ -163,10 +163,11 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
         const r = await deps.setupNow?.();
         if (!r) return '봇이 준비되지 않았거나 공지 채널이 설정되지 않았어요.';
         const lines = ['🔧 알림 역할·구독 패널·상태판을 다시 맞췄어요.'];
-        if (r.members) lines.push(`국내 알림 역할을 새로 준 멤버: ${r.members.added}명`);
+        if (r.members) lines.push(`👥 국내 알림 역할: 이번에 ${r.members.added}명에게 줬어요${r.members.failed ? ` · 실패 ${r.members.failed}명` : ''} (새로 확인한 멤버 ${r.members.initialized}명)`);
+        if (r.memberError) lines.push(`⚠️ ${r.memberError}`);
         if (r.missing?.length) lines.push(`⚠️ 부족한 권한: ${r.missing.join(', ')}`);
         for (const e of r.errors ?? []) lines.push(`⚠️ ${e}`);
-        return lines.join('\n');
+        return lines.join('\n').slice(0, 1900);
       }
       default:
         return null;

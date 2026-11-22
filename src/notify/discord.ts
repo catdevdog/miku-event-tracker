@@ -76,6 +76,8 @@ export interface DiscordBotOptions {
   presence?: () => Promise<string>;
   /** 처음 준비됐을 때 한 번 */
   onReady?: (tag: string) => void | Promise<void>;
+  /** 명령·버튼·입력 창 처리 중 오류 (관리자 경보용) */
+  onError?: (where: string, err: unknown) => void | Promise<void>;
   log?: Pick<Console, 'log' | 'warn' | 'error'>;
 }
 
@@ -122,6 +124,8 @@ export interface DiscordBot extends ChannelSender {
   removeMemberRole(userId: string, roleId: string): Promise<void>;
   /** 봇에게 없는 권한 이름 (서버 전체 + channelId 채널 기준) */
   missingPermissions(channelId?: string): Promise<string[]>;
+  /** 봇의 가장 높은 역할보다 아래가 아닌 역할 이름 (봇이 줄 수 없는 역할) */
+  rolesNotBelowBot(roleIds: string[]): Promise<string[]>;
   /** 서버 예약 이벤트를 만들 권한(이벤트 만들기 또는 이벤트 관리)이 있는지 */
   canManageEvents(): Promise<boolean>;
   createGuildEvent(spec: GuildEventSpec): Promise<string>;
@@ -229,32 +233,64 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
       return;
     }
     if (interaction.isButton()) {
-      await handleButton(interaction).catch(async (err: unknown) => {
-        log.error(`버튼 처리 실패 (${interaction.customId}): ${errText(err)}`);
-        await replyError(interaction);
-      });
+      await handleButton(interaction).catch((err: unknown) => failed(interaction, `버튼 ${interaction.customId}`, err));
       return;
     }
     if (interaction.isModalSubmit()) {
-      await handleModal(interaction).catch(async (err: unknown) => {
-        log.error(`입력 창 처리 실패 (${interaction.customId}): ${errText(err)}`);
-        await replyError(interaction);
-      });
+      await handleModal(interaction).catch((err: unknown) => failed(interaction, `입력 창 ${interaction.customId}`, err));
       return;
     }
     if (!interaction.isChatInputCommand() && !interaction.isMessageContextMenuCommand()) return;
-    await handleCommand(interaction).catch(async (err: unknown) => {
-      log.error(`명령 처리 실패 (/${interaction.commandName}): ${errText(err)}`);
-      await replyError(interaction);
+    await handleCommand(interaction).catch((err: unknown) => {
+      const sub = interaction.isChatInputCommand() ? interaction.options.getSubcommand(false) : null;
+      return failed(interaction, `/${interaction.commandName}${sub ? ` ${sub}` : ''}`, err);
     });
   });
 
   type Repliable = ButtonInteraction | ModalSubmitInteraction | ChatInputCommandInteraction | MessageContextMenuCommandInteraction;
 
-  /** 처리 중 오류가 나면 누른 사람에게만 짧게 알린다 (이미 답했으면 생략) */
-  async function replyError(i: Repliable) {
-    if (i.replied || i.deferred) return;
-    await i.reply({ content: '처리 중에 문제가 생겼어요. 잠시 뒤에 다시 해 주세요.', flags: MessageFlags.Ephemeral }).catch(() => undefined);
+  /**
+   * 처리 중 오류: 누른 사람에게 원인을 짧게 보여 주고(디스코드 API 오류 문구, 시크릿 없음), 로그와 관리자 경보에 남긴다.
+   * 이미 답했으면 생략, 응답을 미뤄 둔(defer) 상태면 그 응답을 고친다.
+   */
+  async function failed(i: Repliable, where: string, err: unknown) {
+    log.error(`${where} 처리 실패: ${errText(err)}`);
+    await Promise.resolve(opts.onError?.(where, err)).catch(() => undefined);
+    const code = (err as { code?: unknown } | null)?.code;
+    const content = `처리 중에 문제가 생겼어요: ${errText(err).slice(0, 300)}${typeof code === 'number' ? ` (${code})` : ''}`;
+    if (i.deferred && !i.replied) await i.editReply({ content }).catch(() => undefined);
+    else if (!i.replied) await i.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => undefined);
+  }
+
+  /**
+   * 디스코드는 3초 안에 응답해야 한다. 2초 안에 결과가 안 나오면 "생각 중"으로 미뤄 두고(deferReply) 끝나면 그 응답을 고친다.
+   * 입력 창(모달)은 미룬 뒤에는 열 수 없으므로 안내 문구로 바꾼다.
+   */
+  async function respond(i: ChatInputCommandInteraction | MessageContextMenuCommandInteraction | ModalSubmitInteraction, produce: () => Promise<CommandResult | null>) {
+    let deferring: Promise<unknown> | undefined;
+    const timer = setTimeout(() => {
+      deferring = i.deferReply({ flags: MessageFlags.Ephemeral }).catch((err: unknown) => log.warn(`응답 미루기 실패: ${errText(err)}`));
+    }, 2000);
+    let result: CommandResult | null;
+    try {
+      result = await produce();
+    } finally {
+      clearTimeout(timer);
+      await deferring;
+    }
+    if (result === null) {
+      if (i.deferred) await i.deleteReply().catch(() => undefined);
+      return;
+    }
+    if (typeof result === 'object' && 'modal' in result) {
+      if (i.deferred || i.isModalSubmit()) {
+        await replyEphemeral(i, '입력 창을 여는 데 시간이 걸렸어요. 한 번 더 실행해 주세요.');
+        return;
+      }
+      await i.showModal(modalPayload(result.modal));
+      return;
+    }
+    await replyEphemeral(i, result);
   }
 
   function interactionCtx(i: { user: { id: string }; member: unknown; memberPermissions: { has(p: bigint): boolean } | null }): InteractionCtx {
@@ -267,9 +303,18 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
     return { userId: i.user.id, isAdmin: i.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false, memberRoleIds: roles };
   }
 
-  /** 응답(문자열·카드)을 누른 사람에게만 보이게 보낸다 */
+  /** 응답(문자열·카드)을 누른 사람에게만 보이게 보낸다. 미뤄 둔 응답이면 그 응답을 고친다 */
   async function replyEphemeral(i: Repliable, content: Reply) {
     const msg = typeof content === 'string' ? { content } : content;
+    if (i.deferred && !i.replied) {
+      await sendWithFallback(
+        msg,
+        (card) => i.editReply({ components: card, flags: MessageFlags.IsComponentsV2, allowedMentions: { parse: [] } }),
+        (plain) => i.editReply({ content: plain.content ?? null, embeds: plain.embeds ?? [], allowedMentions: { parse: [] } }),
+        log,
+      );
+      return;
+    }
     await sendWithFallback(
       msg,
       (card) => i.reply({ components: card, flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2, allowedMentions: { parse: [] } }),
@@ -351,14 +396,8 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
       const m = interaction.targetMessage;
       ctx.targetMessage = { id: m.id, channelId: m.channelId, url: m.url, content: m.content ?? '', authorId: m.author.id };
     }
-    const result = await opts.onCommand(interaction.commandName, ctx);
-    if (result === null) return;
-    if (typeof result === 'object' && 'modal' in result) {
-      await interaction.showModal(modalPayload(result.modal));
-      return;
-    }
     // 명령 응답은 친 사람에게만 보인다
-    await replyEphemeral(interaction, result);
+    await respond(interaction, () => opts.onCommand(interaction.commandName, ctx));
   }
 
   async function handleAutocomplete(interaction: AutocompleteInteraction) {
@@ -395,7 +434,7 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
       const value = (f as { value?: unknown }).value;
       if (typeof value === 'string') fields[id] = value;
     }
-    await replyEphemeral(interaction, await opts.onModal(interaction.customId, fields, interactionCtx(interaction)));
+    await respond(interaction, () => opts.onModal!(interaction.customId, fields, interactionCtx(interaction)));
   }
 
   // 로그인 실패 시 재시도 간격(분). 토큰이 틀린 경우는 재시도하지 않는다.
@@ -520,6 +559,17 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
         }
       }
       return missing;
+    },
+    async rolesNotBelowBot(roleIds: string[]) {
+      const g = await guild();
+      const me = await g.members.fetchMe();
+      const top = me.roles.highest.position;
+      const out: string[] = [];
+      for (const id of roleIds) {
+        const role = await g.roles.fetch(id).catch(() => null);
+        if (role && role.position >= top) out.push(role.name);
+      }
+      return out;
     },
     async canManageEvents() {
       const me = await (await guild()).members.fetchMe();
