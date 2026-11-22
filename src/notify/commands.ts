@@ -2,6 +2,7 @@ import { SlashCommandBuilder } from 'discord.js';
 import type { ServiceStatus } from '../services/status.js';
 import type { SourceStatusRow } from '../services/sources.js';
 import type { RecentRawItem } from '../services/rawItems.js';
+import type { EventScope } from '../services/events.js';
 import type { EventRow } from '../pipeline/merge.js';
 import { formatKst, textTable } from './format.js';
 import type { OutgoingMessage } from './types.js';
@@ -15,7 +16,15 @@ export const commandDefinitions = [
     .setName('행사')
     .setDescription('다가오는 미쿠 행사')
     .addStringOption((o) =>
-      o.setName('범위').setDescription('국내·해외·전체 (기본: 전체)').addChoices({ name: '국내', value: 'domestic' }, { name: '해외', value: 'overseas' }, { name: '전체', value: 'all' }),
+      o
+        .setName('범위')
+        .setDescription('국내·일본·해외·전체 (기본: 전체)')
+        .addChoices(
+          { name: '국내', value: 'domestic' },
+          { name: '일본', value: 'japan' },
+          { name: '해외 (일본 제외)', value: 'overseas' },
+          { name: '전체', value: 'all' },
+        ),
     )
     .toJSON(),
 ];
@@ -91,8 +100,8 @@ export function buildRecentReply(rows: RecentRawItem[]): OutgoingMessage {
   };
 }
 
-export type EventScope = 'domestic' | 'overseas' | 'all';
-export const SCOPE_KO: Record<EventScope, string> = { domestic: '국내', overseas: '해외', all: '전체' };
+export type { EventScope };
+export const SCOPE_KO: Record<EventScope, string> = { domestic: '국내', japan: '일본', overseas: '해외 (일본 제외)', all: '전체' };
 const STATUS2: Record<string, string> = { announced: '발표', ticket_scheduled: '예정', on_sale: '판매', ongoing: '진행' };
 const REGION2: Record<string, string> = { KR: '국내', JP: '일본', OTHER: '해외' };
 

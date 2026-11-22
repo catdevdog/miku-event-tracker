@@ -10,6 +10,7 @@ import { ensureDefaultSubscriber, planForChange, planNotifications, renderEventM
 import { planReminders, reminderSlot } from '../src/notify/reminders.js';
 import { sendQueued } from '../src/notify/sender.js';
 import type { Notifier } from '../src/notify/notifier.js';
+import { listUpcomingEvents, parseEventScope, type EventScope } from '../src/services/events.js';
 import { makeTestDb } from './helpers.js';
 
 let t: Awaited<ReturnType<typeof makeTestDb>>;
@@ -358,3 +359,19 @@ describe('Anthropic 추출기', () => {
   });
 });
 
+
+describe('/행사 조회 범위', () => {
+  it('국내·일본·해외(일본 제외)·전체로 거른다', async () => {
+    await mergeExtraction(t.db, ext(), ctx((await rawItem()).id));
+    await mergeExtraction(t.db, ext({ title: '初音ミク マジカルミライ 2027', region: 'JP', city: '千葉', venue: '幕張メッセ', start_date: '2027-08-20', end_date: '2027-08-22' }), ctx((await rawItem()).id));
+    await mergeExtraction(t.db, ext({ title: 'MIKU EXPO 2027 NORTH AMERICA', region: 'OTHER', city: 'Los Angeles', venue: 'Peacock Theater', start_date: '2027-05-01', end_date: '2027-05-01' }), ctx((await rawItem()).id));
+    const regions = async (scope: EventScope) => (await listUpcomingEvents(t.db, { scope })).map((e) => e.region);
+    expect(await regions('domestic')).toEqual(['KR']);
+    expect(await regions('japan')).toEqual(['JP']);
+    expect(await regions('overseas')).toEqual(['OTHER']);
+    expect(await regions('all')).toEqual(['KR', 'OTHER', 'JP']);
+    expect(parseEventScope('japan')).toBe('japan');
+    expect(parseEventScope(null)).toBe('all');
+    expect(parseEventScope('moon')).toBe('all');
+  });
+});

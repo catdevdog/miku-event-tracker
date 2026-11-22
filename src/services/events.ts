@@ -1,14 +1,25 @@
-import { and, asc, eq, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { events, EVENT_REGIONS } from '../db/schema.js';
 
 export type EventRegion = (typeof EVENT_REGIONS)[number];
 
+/** 조회 범위. domestic=KR, japan=JP, overseas=OTHER(일본 제외 해외), all=전체 */
+export const EVENT_SCOPES = ['all', 'domestic', 'japan', 'overseas'] as const;
+export type EventScope = (typeof EVENT_SCOPES)[number];
+const SCOPE_REGION: Record<EventScope, EventRegion | undefined> = { all: undefined, domestic: 'KR', japan: 'JP', overseas: 'OTHER' };
+
+/** 알 수 없는 값은 전체로 */
+export function parseEventScope(v: string | null | undefined): EventScope {
+  return (EVENT_SCOPES as readonly string[]).includes(v ?? '') ? (v as EventScope) : 'all';
+}
+
 /**
  * 다가오는(또는 진행 중인) 확정 행사. 슬래시 명령, 추후 멘션 질의·공개 웹이 같이 쓴다.
  * 검수 대기·종료·취소는 뺀다. 시작일 미정은 뒤로.
  */
-export async function listUpcomingEvents(db: Db, opts: { scope?: 'domestic' | 'overseas' | 'all'; limit?: number } = {}) {
+export async function listUpcomingEvents(db: Db, opts: { scope?: EventScope; limit?: number } = {}) {
+  const region = SCOPE_REGION[opts.scope ?? 'all'];
   return db
     .select()
     .from(events)
@@ -16,7 +27,7 @@ export async function listUpcomingEvents(db: Db, opts: { scope?: 'domestic' | 'o
       and(
         eq(events.needsReview, 0),
         sql`${events.status} NOT IN ('ended','cancelled')`,
-        opts.scope === 'domestic' ? eq(events.region, 'KR') : opts.scope === 'overseas' ? ne(events.region, 'KR') : undefined,
+        region ? eq(events.region, region) : undefined,
       ),
     )
     .orderBy(sql`${events.startDate} IS NULL`, asc(events.startDate), asc(events.id))

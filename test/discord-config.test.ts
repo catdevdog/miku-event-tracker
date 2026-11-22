@@ -31,6 +31,8 @@ describe('디스코드 설정', () => {
 describe('/ping', () => {
   it('명령 정의: ping, 소스, 최근수집, 행사', () => {
     expect(commandDefinitions.map((c) => c.name)).toEqual(['ping', '소스', '최근수집', '행사']);
+    const scopeOpt = (commandDefinitions[3] as { options?: { choices?: { value: string }[] }[] }).options![0]!;
+    expect(scopeOpt.choices!.map((c) => c.value)).toEqual(['domestic', 'japan', 'overseas', 'all']);
   });
 
   it('응답에 지연, 가동 시간, 소스 수, 마지막 수집(KST), 연속 실패 소스가 들어간다', () => {
@@ -88,5 +90,6 @@ describe('명령 응답 (임베드 + 고정폭 표)', async () => {
     expect(ev.embeds![0]!.title).toBe('다가오는 행사 · 국내');
     expect(desc(ev)).toContain('27.03.06~03.07  국내  예정  HATSUNE MIKU EXPO 2027 KOREA @올림픽홀 · 티켓 12-01 20:00');
     expect(desc(buildEventsReply([], 'overseas'))).toContain('없습니다');
+    expect(buildEventsReply([], 'japan').embeds![0]!.title).toBe('다가오는 행사 · 일본');
   });
 });
