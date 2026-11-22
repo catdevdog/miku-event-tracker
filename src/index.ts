@@ -9,11 +9,11 @@ import { createApp } from './app.js';
 import { startDiscordBot, type DiscordBot } from './notify/discord.js';
 import { createWebhookSender } from './notify/webhook.js';
 import { createNotifier, dedupAlerter } from './notify/notifier.js';
-import { buildEventsReply, buildPingReply, buildRecentReply, buildSourcesReply } from './notify/commands.js';
+import { buildEventsReply, buildPingReply, buildRecentReply, buildSourcesReply, type EventScope } from './notify/commands.js';
 import { getServiceStatus } from './services/status.js';
 import { listSourceStatuses } from './services/sources.js';
 import { listRecentRawItems } from './services/rawItems.js';
-import { listUpcomingEvents, type EventRegion } from './services/events.js';
+import { listUpcomingEvents } from './services/events.js';
 import { createPipelineRunner } from './pipeline/index.js';
 import { createAnthropicExtractor } from './pipeline/extract.js';
 import { ensureDefaultSubscriber } from './notify/planner.js';
@@ -67,8 +67,10 @@ if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID
           return buildSourcesReply(await listSourceStatuses(db));
         case '최근수집':
           return buildRecentReply(await listRecentRawItems(db, 15));
-        case '행사':
-          return buildEventsReply(await listUpcomingEvents(db, { region: (ctx.getString('지역') ?? undefined) as EventRegion | undefined }));
+        case '행사': {
+          const scope = (ctx.getString('범위') ?? 'all') as EventScope;
+          return buildEventsReply(await listUpcomingEvents(db, { scope }), scope);
+        }
         default:
           return null;
       }

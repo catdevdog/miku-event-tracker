@@ -4,7 +4,7 @@ import { eventSources, notifications, rawItems, sources, subscribers } from '../
 import type { EventRow } from '../pipeline/merge.js';
 import type { EventStatus } from '../pipeline/state.js';
 import type { OutgoingMessage } from './types.js';
-import { formatKst } from './format.js';
+import { discordTime, formatKstShort, formatPeriodKo } from './format.js';
 
 export type NotifyReason = 'new' | 'status_change' | 'reminder';
 
@@ -18,43 +18,73 @@ const OFFICIALITY_KO: Record<string, string> = {
 const STATUS_KO: Record<string, string> = {
   announced: '발표', ticket_scheduled: '예매 예정', on_sale: '판매 중', ongoing: '진행 중', ended: '종료', cancelled: '취소',
 };
-const REGION_KO: Record<string, string> = { KR: '한국', JP: '일본', OTHER: '해외' };
 
-/** 사유별 머리말과 색 */
-function headline(reason: NotifyReason, status: EventStatus, slot: string): { label: string; color: number } {
-  if (reason === 'reminder') return { label: slot === 'T-1h' ? '티켓 오픈 1시간 전' : '티켓 오픈 24시간 전', color: 0xf5a623 };
-  if (reason === 'new') return { label: '새 행사', color: 0x39c5bb };
-  if (status === 'ticket_scheduled') return { label: '예매 일정', color: 0x4a90e2 };
-  if (status === 'on_sale') return { label: '판매 시작', color: 0x7ed321 };
-  if (status === 'cancelled') return { label: '취소', color: 0xd0021b };
-  return { label: STATUS_KO[status] ?? status, color: 0x9b9b9b };
+/** 사유별 머리말·아이콘·색 */
+function headline(reason: NotifyReason, status: EventStatus, slot: string): { label: string; icon: string; color: number } {
+  if (reason === 'reminder') return slot === 'T-1h' ? { label: '티켓 오픈 1시간 전', icon: '⏰', color: 0xff6b35 } : { label: '티켓 오픈 24시간 전', icon: '⏰', color: 0xf5a623 };
+  if (reason === 'new') return { label: '새 행사', icon: '🆕', color: 0x39c5bb };
+  if (status === 'ticket_scheduled') return { label: '예매 일정 공개', icon: '🗓️', color: 0x4a90e2 };
+  if (status === 'on_sale') return { label: '판매 시작', icon: '🎫', color: 0x7ed321 };
+  if (status === 'cancelled') return { label: '행사 취소', icon: '⛔', color: 0xd0021b };
+  return { label: STATUS_KO[status] ?? status, icon: '📢', color: 0x9b9b9b };
 }
 
-const period = (e: EventRow) =>
-  e.startDate ? (e.endDate && e.endDate !== e.startDate ? `${e.startDate} ~ ${e.endDate}` : e.startDate) : '미정';
+/**
+ * 국내·해외 구분 이미지 (임베드 오른쪽 위 썸네일). 값이 없으면 썸네일을 넣지 않는다.
+ * 이미지 파일은 레포 assets/에 두고 GitHub raw 주소로 쓴다.
+ */
+export const REGION_THUMBNAILS: Record<string, string | undefined> = {
+  KR: undefined,
+  JP: undefined,
+  OTHER: undefined,
+};
 
-/** 디스코드 임베드 메시지. 시각은 한국 시각으로 표시한다 (규칙 8). */
+const REGION_FLAG: Record<string, string> = { KR: '🇰🇷 국내', JP: '🇯🇵 일본', OTHER: '🌏 해외' };
+
+/** 출처 URL을 "[호스트](URL)" 링크로 */
+function sourceLink(url: string): string {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    return `[${host}](${url})`;
+  } catch {
+    return url;
+  }
+}
+
+/** 디스코드 임베드 메시지. 시각은 한국 시각과 디스코드 타임스탬프(보는 사람 기준·상대 시간)를 함께 쓴다. */
 export function renderEventMessage(e: EventRow, reason: NotifyReason, slot = '', sourceUrls: string[] = []): OutgoingMessage {
-  const { label, color } = headline(reason, e.status, slot);
-  const fields = [
-    { name: '종류', value: `${KIND_KO[e.kind] ?? e.kind} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}`, inline: true },
-    { name: '상태', value: STATUS_KO[e.status] ?? e.status, inline: true },
-    { name: '지역', value: [REGION_KO[e.region] ?? e.region, e.city].filter(Boolean).join(' '), inline: true },
-    { name: '기간', value: period(e), inline: true },
-    { name: '장소', value: e.venue ?? '미정', inline: true },
-    { name: '티켓 오픈', value: e.ticketOpenAt ? formatKst(e.ticketOpenAt) : '미정', inline: true },
-  ];
-  if (e.ticketUrl) fields.push({ name: '예매', value: e.ticketUrl.slice(0, 1024), inline: false });
+  const { label, icon, color } = headline(reason, e.status, slot);
   const links = [...new Set(sourceUrls)].slice(0, 3);
-  if (links.length) fields.push({ name: '출처', value: links.join('\n').slice(0, 1024), inline: false });
+  const place = [e.city, e.venue].filter(Boolean).join(' · ') || '미정';
+  const ticket = e.ticketOpenAt
+    ? `${formatKstShort(e.ticketOpenAt)} KST (${discordTime(e.ticketOpenAt, 'R')})`
+    : '미정';
+
+  const lines = [
+    `📅 **일정**　${formatPeriodKo(e.startDate, e.endDate)}`,
+    `📍 **장소**　${place}`,
+    `🎫 **티켓 오픈**　${ticket}`,
+    `🏷️ **구분**　${REGION_FLAG[e.region] ?? e.region} · ${KIND_KO[e.kind] ?? e.kind} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}`,
+  ];
+  const summary = (e.summaryKo ?? '').trim();
+  const description = [summary, summary ? '' : null, ...lines].filter((l) => l !== null).join('\n').slice(0, 4000);
+
+  const fields: { name: string; value: string; inline?: boolean }[] = [];
+  if (e.ticketUrl) fields.push({ name: '예매', value: `[예매 페이지 열기](${e.ticketUrl})`.slice(0, 1024), inline: true });
+  if (links.length) fields.push({ name: '출처', value: links.map(sourceLink).join('\n').slice(0, 1024), inline: true });
+
+  const thumbnail = REGION_THUMBNAILS[e.region];
   return {
     embeds: [
       {
-        title: `[${label}] ${e.title}`.slice(0, 256),
+        author: { name: `${icon} ${label}` },
+        title: e.title.slice(0, 256),
         url: e.ticketUrl ?? links[0],
-        description: (e.summaryKo ?? '').slice(0, 2000) || undefined,
+        description,
         color,
         fields,
+        ...(thumbnail ? { thumbnail: { url: thumbnail } } : {}),
+        footer: { text: `상태: ${STATUS_KO[e.status] ?? e.status} · 미쿠 행사 알림` },
       },
     ],
   };

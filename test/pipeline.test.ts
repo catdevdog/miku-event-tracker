@@ -169,14 +169,22 @@ describe('알림 (규칙 7)', () => {
     expect(slots).toEqual(['T-24h', 'T-1h']);
   });
 
-  it('임베드: 사유 머리말, 한국 시각, 예매 링크', async () => {
+  it('임베드: 머리말, 한국 시각 + 상대 시각, 구분, 예매·출처 링크', async () => {
     const m = await mergeExtraction(t.db, ext({ ticket_open_at: '2026-12-01T11:00:00.000Z', ticket_url: 'https://ticket.melon.com/x' }), ctx((await rawItem()).id));
     const msg = renderEventMessage(m.event, 'reminder', 'T-1h', ['https://x.com/cfm_miku/status/1']);
-    const embed = msg.embeds![0] as { title: string; url: string; fields: { name: string; value: string }[] };
-    expect(embed.title).toBe('[티켓 오픈 1시간 전] HATSUNE MIKU EXPO 2027 KOREA');
+    const embed = msg.embeds![0] as { author: { name: string }; title: string; url: string; description: string; fields: { name: string; value: string }[]; thumbnail?: unknown };
+    expect(embed.author.name).toBe('⏰ 티켓 오픈 1시간 전');
+    expect(embed.title).toBe('HATSUNE MIKU EXPO 2027 KOREA');
     expect(embed.url).toBe('https://ticket.melon.com/x');
-    expect(embed.fields.find((f) => f.name === '티켓 오픈')!.value).toMatch(/2026\. 12\. 01\.\s*20:00 KST/);
-    expect(embed.fields.find((f) => f.name === '종류')!.value).toBe('공연 · 크립톤 공식');
+    expect(embed.description).toContain('📅 **일정**　2027.03.06(토) ~ 03.07(일)');
+    expect(embed.description).toContain('📍 **장소**　서울 · 올림픽홀');
+    expect(embed.description).toContain('🎫 **티켓 오픈**　2026.12.01(화) 20:00 KST (<t:1796122800:R>)');
+    expect(embed.description).toContain('🇰🇷 국내 · 공연 · 크립톤 공식');
+    expect(embed.fields).toEqual([
+      { name: '예매', value: '[예매 페이지 열기](https://ticket.melon.com/x)', inline: true },
+      { name: '출처', value: '[x.com](https://x.com/cfm_miku/status/1)', inline: true },
+    ]);
+    expect(embed.thumbnail).toBeUndefined();
   });
 
   it('발송: 공지 채널은 notifier로, 실패하면 3회까지 다시 시도', async () => {

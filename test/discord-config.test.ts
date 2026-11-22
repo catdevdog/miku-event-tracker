@@ -52,22 +52,41 @@ describe('/ping', () => {
   });
 });
 
-describe('명령 응답', async () => {
+describe('명령 응답 (임베드 + 고정폭 표)', async () => {
   const { buildSourcesReply, buildRecentReply, buildEventsReply } = await import('../src/notify/commands.js');
+  const { displayWidth, textTable } = await import('../src/notify/format.js');
+  const desc = (m: { embeds?: Record<string, unknown>[] }) => String(m.embeds![0]!.description);
+
+  it('표: 한글은 2칸으로 계산해 앞쪽 열을 맞추고, 마지막 열은 자른다', () => {
+    expect(displayWidth('정상 ab')).toBe(7);
+    const table = textTable(['상태', '시각', '이름'], [['정상', '11-22 23:05', 'PR TIMES'], ['경보', '-----------', '가'.repeat(40)]], 10);
+    expect(table.split('\n')).toEqual(['```', '상태  시각         이름', '정상  11-22 23:05  PR TIMES', '경보  -----------  가가가가…', '```']);
+  });
+
   it('/소스', () => {
-    const text = buildSourcesReply([
+    const m = buildSourcesReply([
       { name: 'PR TIMES', adapter: 'rss', enabled: true, lastRunAt: null, lastSuccessAt: '2026-11-22T14:05:00.000Z', consecutiveFailures: 0 },
       { name: 'X @cfm_miku', adapter: 'x_crawl', enabled: true, lastRunAt: null, lastSuccessAt: null, consecutiveFailures: 3 },
       { name: 'NOL 티켓', adapter: 'ticket', enabled: false, lastRunAt: null, lastSuccessAt: null, consecutiveFailures: 0 },
     ]);
-    expect(text).toContain('소스 2/3개 활성 · 연속 실패 1개');
-    expect(text).toContain('✅ PR TIMES · 성공 11-22 23:05');
-    expect(text).toContain('⚠️ X @cfm_miku · 성공 - · 실패 3');
-    expect(text).toContain('⏸ NOL 티켓');
+    expect(desc(m)).toContain('정상  11-22 23:05  0     PR TIMES');
+    expect(desc(m)).toContain('경보  -----------  3     X @cfm_miku');
+    expect(desc(m)).toContain('꺼짐  -----------  0     NOL 티켓');
+    expect((m.embeds![0]!.footer as { text: string }).text).toContain('활성 2/3개 · 3회 이상 연속 실패 1개');
   });
+
   it('/최근수집, /행사', () => {
-    expect(buildRecentReply([])).toBe('아직 수집한 글이 없습니다.');
-    expect(buildRecentReply([{ source: '멜론티켓', title: '하츠네 미쿠 EXPO', url: null, fetchedAt: '2026-11-22T14:05:00.000Z', keywordHit: 'strong', llmStatus: 'done' }])).toContain('11-22 23:05 [강·완료] 멜론티켓 · 하츠네 미쿠 EXPO');
-    expect(buildEventsReply([])).toContain('없습니다');
+    expect(desc(buildRecentReply([]))).toBe('아직 수집한 글이 없습니다.');
+    const r = buildRecentReply([{ source: '멜론티켓', title: '하츠네 미쿠 EXPO', url: null, fetchedAt: '2026-11-22T14:05:00.000Z', keywordHit: 'strong', llmStatus: 'done' }]);
+    expect(desc(r)).toContain('11-22 23:05  강  완료  멜론티켓 · 하츠네 미쿠 EXPO');
+    const ev = buildEventsReply(
+      [
+        { id: 1, title: 'HATSUNE MIKU EXPO 2027 KOREA', kind: 'concert', officiality: 'crypton', region: 'KR', city: '서울', venue: '올림픽홀', startDate: '2027-03-06', endDate: '2027-03-07', ticketOpenAt: '2026-12-01T11:00:00.000Z', ticketUrl: null, status: 'ticket_scheduled', parentEventId: null, summaryKo: null, dedupKey: 'k', needsReview: 0, createdAt: '', updatedAt: '' },
+      ],
+      'domestic',
+    );
+    expect(ev.embeds![0]!.title).toBe('다가오는 행사 · 국내');
+    expect(desc(ev)).toContain('27.03.06~03.07  국내  예정  HATSUNE MIKU EXPO 2027 KOREA @올림픽홀 · 티켓 12-01 20:00');
+    expect(desc(buildEventsReply([], 'overseas'))).toContain('없습니다');
   });
 });

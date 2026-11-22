@@ -17,8 +17,8 @@ export interface DiscordBotOptions {
   token: string;
   appId: string;
   guildId: string;
-  /** 슬래시 명령 응답 본문을 만든다. 모르는 명령이면 null */
-  onCommand: (name: string, ctx: CommandContext) => Promise<string | null>;
+  /** 슬래시 명령 응답(텍스트 또는 임베드)을 만든다. 모르는 명령이면 null */
+  onCommand: (name: string, ctx: CommandContext) => Promise<string | OutgoingMessage | null>;
   /** 처음 준비됐을 때 한 번 */
   onReady?: (tag: string) => void | Promise<void>;
   log?: Pick<Console, 'log' | 'warn' | 'error'>;
@@ -87,7 +87,12 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
     });
     if (content === null) return;
     // 명령 응답은 친 사람에게만 보인다
-    await interaction.reply({ content: truncate(content), flags: MessageFlags.Ephemeral });
+    const msg = typeof content === 'string' ? { content } : content;
+    await interaction.reply({
+      content: msg.content ? truncate(msg.content) : undefined,
+      embeds: msg.embeds,
+      flags: MessageFlags.Ephemeral,
+    });
   }
 
   // 로그인 실패 시 재시도 간격(분). 토큰이 틀린 경우는 재시도하지 않는다.
