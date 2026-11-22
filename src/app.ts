@@ -1,8 +1,8 @@
 import express, { type Express, type RequestHandler } from 'express';
 import { timingSafeEqual } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import type { Db } from './db/client.js';
-import { sources } from './db/schema.js';
+import { jobRuns, rawItems, sources } from './db/schema.js';
 import { getServiceStatus } from './services/status.js';
 
 export interface AppDeps {
@@ -72,6 +72,47 @@ export function createApp({ db, adminBasicAuth, startedAt, discordState = () => 
       })
       .from(sources)
       .orderBy(sources.id);
+    res.json(rows);
+  });
+  // 최근 실행 기록 (오류 확인용)
+  admin.get('/job-runs', async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 50, 500);
+    const rows = await db
+      .select({
+        id: jobRuns.id,
+        source: sources.name,
+        adapter: sources.adapter,
+        startedAt: jobRuns.startedAt,
+        finishedAt: jobRuns.finishedAt,
+        status: jobRuns.status,
+        itemsNew: jobRuns.itemsNew,
+        error: jobRuns.error,
+      })
+      .from(jobRuns)
+      .innerJoin(sources, eq(sources.id, jobRuns.sourceId))
+      .where(req.query.status ? eq(jobRuns.status, String(req.query.status) as 'ok') : undefined)
+      .orderBy(desc(jobRuns.id))
+      .limit(limit);
+    res.json(rows);
+  });
+  // 최근 수집 원문 (어댑터 동작 확인용)
+  admin.get('/raw-items', async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 50, 500);
+    const rows = await db
+      .select({
+        id: rawItems.id,
+        source: sources.name,
+        title: rawItems.title,
+        url: rawItems.url,
+        publishedAt: rawItems.publishedAt,
+        fetchedAt: rawItems.fetchedAt,
+        keywordHit: rawItems.keywordHit,
+        llmStatus: rawItems.llmStatus,
+      })
+      .from(rawItems)
+      .innerJoin(sources, eq(sources.id, rawItems.sourceId))
+      .orderBy(desc(rawItems.id))
+      .limit(limit);
     res.json(rows);
   });
   app.use('/api/admin', admin);

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rdf:RDF xml:language="ja" xmlns="http://purl.org/rss/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:foaf="http://xmlns.com/foaf/0.1/"><channel rdf:about="https://prtimes.jp/companyrdf.php?company_id=52709">
+<title>クリプトン・フューチャー・メディア株式会社【プレスリリース】 by PR TIMES</title>
+<link>https://prtimes.jp</link>
+<dc:date>2026-11-20T23:41:09+09:00</dc:date>
+<dc:language>ja-JP</dc:language><description>PR TIMES｜クリプトン・フューチャー・メディア株式会社のプレスリリース・ニュースリリース。</description><items>
+<rdf:Seq>
+<rdf:li rdf:resource="https://prtimes.jp/main/html/rd/p/000000734.000052709.html" />
+<rdf:li rdf:resource="https://prtimes.jp/main/html/rd/p/000000732.000052709.html" />
+<rdf:li rdf:resource="https://prtimes.jp/main/html/rd/p/000000730.000052709.html" />
+</rdf:Seq>
+</items>
+</channel>
+<item rdf:about="https://prtimes.jp/main/html/rd/p/000000734.000052709.html">
+<title>声を荒々しく歪ませる拡張ソフト『Voice Drive』新発売！　12月4日まで30%OFF！</title>
+<link>https://prtimes.jp/main/html/rd/p/000000734.000052709.html</link>
+<description>[クリプトン・フューチャー・メディア株式会社]
+クリプトン・フューチャー・メディア株式会社（本社：北海道札幌市、代表取締役：伊藤博之）は、2026年11月20日（金）よ...</description>
+<dc:corp>クリプトン・フューチャー・メディア株式会社</dc:corp>
+<dc:date>2026-11-20T17:11:51+09:00</dc:date>
+<date>2026-11-20</date>
+</item>
+<item rdf:about="https://prtimes.jp/main/html/rd/p/000000732.000052709.html">
+<title>ラビット・ユキネ×福祉、11月27日（金）に札幌チカホでコラボ商品お披露目イベント開催！</title>
+<link>https://prtimes.jp/main/html/rd/p/000000732.000052709.html</link>
+<description>[クリプトン・フューチャー・メディア株式会社]
+クリプトン・フューチャー・メディア株式会社（本社：北海道札幌市、代表取締役：伊藤博之、以下クリプトン）は、北海...</description>
+<dc:corp>クリプトン・フューチャー・メディア株式会社</dc:corp>
+<dc:date>2026-11-19T13:47:47+09:00</dc:date>
+<date>2026-11-19</date>
+</item>
+<item rdf:about="https://prtimes.jp/main/html/rd/p/000000730.000052709.html">
+<title>12月30日（水）都内で開催される大型クラブイベント「VIRAL」に、初音ミクが映像出演！</title>
+<link>https://prtimes.jp/main/html/rd/p/000000730.000052709.html</link>
+<description>[クリプトン・フューチャー・メディア株式会社]
+クリプトン・フューチャー・メディア株式会社は、12月30日（水）都内で開催される大型クラブイベント...</description>
+<dc:corp>クリプトン・フューチャー・メディア株式会社</dc:corp>
+<dc:date>2026-11-13T12:06:57+09:00</dc:date>
+<date>2026-11-13</date>
+</item>
+</rdf:RDF>

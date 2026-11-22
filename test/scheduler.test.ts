@@ -4,7 +4,7 @@ import { seedDatabase } from '../src/db/seed.js';
 import { jobRuns, rawItems, sources } from '../src/db/schema.js';
 import { createScheduler } from '../src/scheduler/index.js';
 import { isSchedulable, jitterMin } from '../src/scheduler/due.js';
-import { runSource, closeInterruptedRuns } from '../src/scheduler/runner.js';
+import { runSource, closeInterruptedRuns, resetSkippedSources } from '../src/scheduler/runner.js';
 import type { AdapterRegistry, SourceAdapter } from '../src/adapters/types.js';
 import type { Alerter } from '../src/alerts.js';
 import { addMinutes } from '../src/lib/time.js';
@@ -19,7 +19,7 @@ afterEach(() => t.cleanup());
 
 const noop: SourceAdapter = { run: async () => ({ items: [] }) };
 const allNoop: AdapterRegistry = Object.fromEntries(
-  (['rss', 'html_diff', 'playwright', 'x_crawl', 'instagram', 'kopis', 'naver'] as const).map((a) => [a, noop]),
+  (['rss', 'html_diff', 'playwright', 'x_crawl', 'instagram', 'kopis', 'naver', 'ticket'] as const).map((a) => [a, noop]),
 );
 const alerter = (): Alerter & { messages: string[] } => {
   const messages: string[] = [];
@@ -29,16 +29,16 @@ const alerter = (): Alerter & { messages: string[] } => {
 describe('스케줄러', () => {
   it('enabled=0 이거나 target=TODO인 소스는 대상에서 뺀다', async () => {
     const all = await t.db.select().from(sources);
-    expect(all.filter(isSchedulable)).toHaveLength(29);
+    expect(all.filter(isSchedulable)).toHaveLength(28);
   });
 
   it('no-op 어댑터로 한 틱을 돌리면 29개 모두 ok로 기록되고, 바로 다음 틱에는 차례가 없다', async () => {
     const now = new Date('2026-11-22T00:00:00Z');
     const s = createScheduler({ db: t.db, adapters: allNoop, alerter: alerter(), now: () => now });
     const r1 = await s.tick();
-    expect(r1).toMatchObject({ checked: 29, due: 29, outcomes: { ok: 29, error: 0, skipped: 0, locked: 0 } });
+    expect(r1).toMatchObject({ checked: 28, due: 28, outcomes: { ok: 28, error: 0, skipped: 0, locked: 0 } });
     const runs = await t.db.select().from(jobRuns);
-    expect(runs).toHaveLength(29);
+    expect(runs).toHaveLength(28);
     expect(runs.every((r) => r.status === 'ok' && r.finishedAt)).toBe(true);
 
     const r2 = await s.tick();
@@ -58,7 +58,7 @@ describe('스케줄러', () => {
   it('어댑터가 없으면 skipped로만 남고 성공 시각은 바뀌지 않는다', async () => {
     const s = createScheduler({ db: t.db, adapters: {}, alerter: alerter() });
     const r = await s.tick();
-    expect(r.outcomes.skipped).toBe(29);
+    expect(r.outcomes.skipped).toBe(28);
     const src = await t.db.select().from(sources);
     expect(src.every((x) => x.lastSuccessAt === null)).toBe(true);
   });
@@ -119,5 +119,16 @@ describe('runSource', () => {
     expect(await closeInterruptedRuns(t.db)).toBe(1);
     const [run] = await t.db.select().from(jobRuns);
     expect(run!.status).toBe('error');
+  });
+
+  it('마지막 실행이 skipped였던 소스는 last_run_at을 비워 바로 돌게 한다', async () => {
+    const s = createScheduler({ db: t.db, adapters: {}, alerter: alerter() });
+    await s.tick();
+    expect(await resetSkippedSources(t.db)).toBe(28);
+    const src = await t.db.select().from(sources);
+    expect(src.every((x) => x.lastRunAt === null)).toBe(true);
+    const s2 = createScheduler({ db: t.db, adapters: allNoop, alerter: alerter() });
+    await s2.tick();
+    expect(await resetSkippedSources(t.db)).toBe(0);
   });
 });

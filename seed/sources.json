@@ -2,12 +2,12 @@
   {
     "name": "크립톤 보도자료 (PR TIMES)",
     "layer": "L1",
-    "adapter": "html_diff",
-    "target": "https://prtimes.jp/main/html/searchrlp/company_id/52709",
+    "adapter": "rss",
+    "target": "https://prtimes.jp/companyrdf.php?company_id=52709",
     "region": "JP",
     "interval_min": 60,
     "config": {
-      "todo": "기업별 RSS가 있으면 rss 어댑터로 교체"
+      "note": "기업별 RSS 1.0(RDF). 2026-11-22 확인"
     }
   },
   {
@@ -62,12 +62,12 @@
     "name": "유튜브 39ch",
     "layer": "L1",
     "adapter": "rss",
-    "target": "https://www.youtube.com/HatsuneMiku",
+    "target": "https://www.youtube.com/feeds/videos.xml?channel_id=UCJwGWV914kBlV4dKRn7AEFA",
     "region": "GLOBAL",
     "interval_min": 60,
     "config": {
-      "resolve_channel_id": true,
-      "feed": "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+      "channel": "https://www.youtube.com/HatsuneMiku",
+      "note": "채널 ID 2026-11-22 확인"
     }
   },
   {
@@ -82,9 +82,12 @@
     "name": "piapro.net",
     "layer": "L1",
     "adapter": "html_diff",
-    "target": "https://piapro.net/",
+    "target": "https://piapro.net/?lang=ja",
     "region": "JP",
-    "interval_min": 360
+    "interval_min": 360,
+    "config": {
+      "note": "일본어 포털. 새 링크(blog.piapro.net 글, 행사 사이트)를 감지"
+    }
   },
   {
     "name": "mikuexpo.com",
@@ -92,7 +95,10 @@
     "adapter": "html_diff",
     "target": "https://mikuexpo.com/",
     "region": "GLOBAL",
-    "interval_min": 360
+    "interval_min": 360,
+    "config": {
+      "note": "투어 페이지 링크(/europe2026/ 등)가 새로 생기면 감지"
+    }
   },
   {
     "name": "magicalmirai.com",
@@ -124,7 +130,12 @@
     "adapter": "html_diff",
     "target": "https://artofmiku.com/",
     "region": "GLOBAL",
-    "interval_min": 360
+    "interval_min": 360,
+    "config": {
+      "render": true,
+      "mode": "text",
+      "note": "STUDIO로 만든 사이트라 링크가 없고 본문이 스크립트로 그려짐"
+    }
   },
   {
     "name": "미쿠 심포니 공식 사이트",
@@ -132,7 +143,21 @@
     "adapter": "html_diff",
     "target": "https://sp.wmg.jp/mikusymphony/",
     "region": "JP",
-    "interval_min": 360
+    "interval_min": 360,
+    "config": {
+      "note": "굿즈 이미지 링크는 기본 제외 규칙으로 걸러짐"
+    }
+  },
+  {
+    "name": "初音ミク公式ブログ (blog.piapro.net)",
+    "layer": "L1",
+    "adapter": "rss",
+    "target": "https://blog.piapro.net/feed",
+    "region": "JP",
+    "interval_min": 60,
+    "config": {
+      "note": "크립톤 공식 블로그. piapro.net 공지의 원문"
+    }
   },
   {
     "name": "X @agf_korea",
@@ -228,46 +253,77 @@
   {
     "name": "멜론티켓",
     "layer": "L3",
-    "adapter": "playwright",
-    "target": "https://ticket.melon.com/",
+    "adapter": "ticket",
+    "target": "https://ticket.melon.com/search/index.htm",
     "region": "KR",
     "interval_min": 180,
     "config": {
-      "todo": "오픈 공지·검색이 쓰는 내부 JSON 요청 확인 후 fetch로 교체"
+      "site": "melon",
+      "mode": "search",
+      "queries": [
+        "미쿠",
+        "하츠네",
+        "보컬로이드",
+        "프로젝트 세카이"
+      ]
+    }
+  },
+  {
+    "name": "멜론티켓 오픈 소식",
+    "layer": "L3",
+    "adapter": "ticket",
+    "target": "https://ticket.melon.com/csoon/index.htm",
+    "region": "KR",
+    "interval_min": 180,
+    "config": {
+      "site": "melon",
+      "mode": "open",
+      "queries": [
+        "미쿠",
+        "하츠네",
+        "보컬로이드",
+        "프로젝트 세카이"
+      ]
     }
   },
   {
     "name": "NOL 티켓",
     "layer": "L3",
-    "adapter": "playwright",
+    "adapter": "ticket",
     "target": "https://nol.yanolja.com/ticket",
     "region": "KR",
     "interval_min": 180,
     "config": {
-      "todo": "오픈 공지·검색이 쓰는 내부 JSON 요청 확인 후 fetch로 교체"
-    }
+      "site": "nol",
+      "todo": "검색·오픈 공지 요청 형식 미확인"
+    },
+    "enabled": false
   },
   {
     "name": "YES24 티켓",
     "layer": "L3",
-    "adapter": "playwright",
+    "adapter": "ticket",
     "target": "https://ticket.yes24.com/",
     "region": "KR",
     "interval_min": 180,
     "config": {
-      "todo": "오픈 공지·검색이 쓰는 내부 JSON 요청 확인 후 fetch로 교체"
-    }
+      "site": "yes24",
+      "todo": "검색·오픈 공지 요청 형식 미확인"
+    },
+    "enabled": false
   },
   {
     "name": "티켓링크",
     "layer": "L3",
-    "adapter": "playwright",
+    "adapter": "ticket",
     "target": "https://www.ticketlink.co.kr/",
     "region": "KR",
     "interval_min": 180,
     "config": {
-      "todo": "오픈 공지·검색이 쓰는 내부 JSON 요청 확인 후 fetch로 교체"
-    }
+      "site": "ticketlink",
+      "todo": "검색·오픈 공지 요청 형식 미확인"
+    },
+    "enabled": false
   },
   {
     "name": "KOPIS 공연목록",
@@ -299,10 +355,13 @@
   {
     "name": "라이브뷰잉",
     "layer": "L3",
-    "adapter": "html_diff",
-    "target": "https://liveviewing.jp/",
+    "adapter": "rss",
+    "target": "https://liveviewing.jp/feed/",
     "region": "KR",
-    "interval_min": 360
+    "interval_min": 180,
+    "config": {
+      "note": "WordPress RSS. 일본 라이브뷰잉 전체라 키워드 필터에 의존"
+    }
   },
   {
     "name": "네이버 검색 (뉴스·블로그·카페)",

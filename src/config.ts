@@ -78,6 +78,8 @@ export class ConfigError extends Error {
 
 /** 환경 변수를 검증한다. 오류 메시지에는 키 이름만 넣고 값은 넣지 않는다. */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  // CLAUDE_API_KEY라는 이름으로 넣은 경우도 받아 준다 (정식 이름은 ANTHROPIC_API_KEY).
+  if (!cleanEnvValue(env.ANTHROPIC_API_KEY) && cleanEnvValue(env.CLAUDE_API_KEY)) env = { ...env, ANTHROPIC_API_KEY: env.CLAUDE_API_KEY };
   const result = refined.safeParse(env);
   if (!result.success) {
     throw new ConfigError(result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`));

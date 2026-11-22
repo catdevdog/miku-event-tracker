@@ -3,8 +3,8 @@ import { openDb } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import { seedDatabase } from './db/seed.js';
 import { createScheduler } from './scheduler/index.js';
-import { closeInterruptedRuns } from './scheduler/runner.js';
-import { adapters } from './adapters/registry.js';
+import { closeInterruptedRuns, resetSkippedSources } from './scheduler/runner.js';
+import { createAdapters } from './adapters/registry.js';
 import { createApp } from './app.js';
 import { startDiscordBot, type DiscordBot } from './notify/discord.js';
 import { createWebhookSender } from './notify/webhook.js';
@@ -22,9 +22,11 @@ const { client, db } = await openDb({ url: config.DATABASE_URL, authToken: confi
 await runMigrations(db);
 const seeded = await seedDatabase(db);
 const interrupted = await closeInterruptedRuns(db);
+const resetSkipped = await resetSkippedSources(db);
 console.log(
   `DB 준비 완료: 소스 추가 ${seeded.sourcesInserted}, 갱신 ${seeded.sourcesUpdated}, 키워드 ${seeded.keywordsUpserted}` +
-    (interrupted ? `, 중단된 실행 ${interrupted}건 정리` : ''),
+    (interrupted ? `, 중단된 실행 ${interrupted}건 정리` : '') +
+    (resetSkipped ? `, 바로 실행할 소스 ${resetSkipped}개` : ''),
 );
 
 // 디스코드: 토큰이 있으면 봇을 켠다. 봇이 없거나 끊기면 공지는 웹후크(설정 시)로, 경보는 콘솔로 간다.
@@ -39,7 +41,7 @@ const notifier = createNotifier({
 });
 const alerter = dedupAlerter(notifier.alerter);
 
-const scheduler = createScheduler({ db, adapters, alerter });
+const scheduler = createScheduler({ db, adapters: createAdapters(config, db), alerter });
 scheduler.start();
 
 if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID) {

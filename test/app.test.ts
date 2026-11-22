@@ -33,6 +33,13 @@ describe('HTTP', () => {
     expect(wrong.status).toBe(401);
     const ok = await fetch(`${base}/api/admin/sources`, { headers: { authorization: `Basic ${btoa('admin:pw')}` } });
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toHaveLength(32);
+    expect(await ok.json()).toHaveLength(34);
+  });
+
+  it('/api/admin/job-runs, /api/admin/raw-items', async () => {
+    const auth = { authorization: `Basic ${btoa('admin:pw')}` };
+    expect(await (await fetch(`${base}/api/admin/job-runs`, { headers: auth })).json()).toEqual([]);
+    expect(await (await fetch(`${base}/api/admin/raw-items`, { headers: auth })).json()).toEqual([]);
+    expect((await fetch(`${base}/api/admin/raw-items`)).status).toBe(401);
   });
 });

@@ -15,7 +15,7 @@
 | 관리 화면 | React + Vite (`web/`) |
 | 스케줄러 | node-cron (프로세스 안). `job_locks` 테이블로 같은 작업의 중복 실행 방지 |
 | DB | SQLite. `@libsql/client` + `drizzle-orm/libsql`. `DATABASE_URL=file:/data/tracker.db` (Railway 볼륨). Turso로 옮길 때는 URL과 토큰만 교체 |
-| 수집 | `rss-parser`, `fetch` + `cheerio`, `playwright`(컨테이너 안 chromium), `@the-convocation/twitter-scraper`(X), 인스타그램 Graph API Business Discovery, KOPIS 오픈API(XML 응답, `fast-xml-parser`), 네이버 검색 API(API HUB) |
+| 수집 | `rss-parser`, `fetch` + `cheerio`, `playwright`(컨테이너 안 chromium, 스크립트로 그리는 페이지만), 예매처는 `ticket` 어댑터(멜론티켓은 서버 렌더링이라 fetch), `@the-convocation/twitter-scraper`(X), 인스타그램 Graph API Business Discovery, KOPIS 오픈API(XML 응답, `fast-xml-parser`), 네이버 검색 API(API HUB) |
 | LLM | `@anthropic-ai/sdk`. 기본 `claude-haiku-5-5`, 확신도가 낮을 때만 `claude-sonnet-5-5`. tool use로 JSON 스키마 강제 |
 | 알림 | discord.js v14 봇. 공지 채널, 관리자 경보 채널, DM, 슬래시 명령. 봇이 준비 전이거나 발송에 실패하면 공지는 웹후크(`DISCORD_NOTICE_WEBHOOK_URL`, 선택)로 보낸다. 관리자 경보는 웹후크로 보내지 않는다 |
 | 배포 | Railway Hobby, Docker 1개 (Playwright 공식 이미지 기반), 볼륨 `/data`. 헬스체크 경로 `/health`는 Railway 대시보드에서 설정한다(railway.json 같은 Config as Code는 Railway에서 폐기 예정이라 쓰지 않음) |
@@ -33,8 +33,14 @@ src/
   scheduler/            1분 틱으로 차례가 된 소스 실행(runner), job lock, boost 주기·X 지터 계산(due)
   adapters/
     types.ts            interface SourceAdapter { run(source, ctx): Promise<{ items: RawItemInput[]; state? }> }
-    registry.ts         구현된 어댑터 목록. 없는 어댑터의 소스는 job_runs에 skipped로 남는다
-    rss.ts  htmlDiff.ts  playwright.ts  xCrawl.ts  instagram.ts  kopis.ts  naver.ts
+    registry.ts         구현된 어댑터 목록(createAdapters). 없는 어댑터의 소스는 job_runs에 skipped로 남는다
+    http.ts             fetch 래퍼, 해시, 상태 목록 관리
+    rss.ts              RSS 2.0·RSS 1.0(RDF)·Atom
+    htmlDiff.ts         새 링크·새 문단 감지, 연도별 페이지(404→200) 감지
+    render.ts           Playwright 렌더링 (config.render=true인 소스만)
+    ticket.ts           예매처 (멜론티켓 검색·티켓오픈소식 구현, NOL·YES24·티켓링크 미구현)
+    kopis.ts  xCrawl.ts
+    instagram.ts  naver.ts   (6단계)
   pipeline/
     keywordFilter.ts    keywords 테이블 기반 판정
     extract.ts          Claude 판정·추출 (tool use)
@@ -56,8 +62,9 @@ scripts/schema-diff.ts  docs/schema.sql과 마이그레이션 구조 비교 (npm
 docs/schema.sql         DDL 정본 (SQLite 3.53에서 검증 완료)
 docs/kopis.md           KOPIS 어댑터 명세 (원문 PDF는 docs/kopis/)
 docs/naver.md           네이버 검색(NAVER API HUB) 어댑터 명세
-seed/sources.json       초기 소스 32개 (enabled=false 3개는 URL·계정 미확인)
-seed/keywords.json      키워드 사전 (strong 21, weak 12, context 15, exclude 2)
+seed/sources.json       소스 34개 (enabled=false 6개: URL·계정 또는 요청 형식 미확인)
+seed/keywords.json      키워드 사전 (strong 22, weak 12, context 15, exclude 2)
+test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 수집, 일부는 명세 기반 예시라고 파일에 표시)
 ```
 
 ## 핵심 규칙
@@ -85,6 +92,7 @@ seed/keywords.json      키워드 사전 (strong 21, weak 12, context 15, exclud
     - 순서: 게스트 토큰 → 보조 계정 쿠키(`X_AUTH_TOKEN`, `X_CT0`) → Playwright로 프로필 페이지를 열어 GraphQL 응답 가로채기
     - 계정마다 1시간 간격에 ±10분 지터
     - 메인 계정 쿠키는 절대 쓰지 않는다.
+    - 현재 구현은 게스트 → 쿠키 두 단계. Playwright 단계는 두 경로가 모두 막히는 경우가 생기면 추가한다.
 11. 어댑터가 연속 3회 실패하면(`consecutive_failures >= 3`) 관리자 경보 채널로 한 번 알리고, 회복하면 회복 알림을 보낸다. 쿠키 만료도 같은 경로로 알린다.
 12. boost 주기: L2 소스에 연결된 행사의 start_date가 60일 이내이면 `boost_interval_min`을 쓴다.
 13. LLM 호출마다 `llm_calls`에 토큰 수와 비용을 기록한다. Haiku 5.5 단가는 입력 100만 토큰당 $0.10, 출력 100만 토큰당 $0.50이다(10만 토큰 이하 프롬프트 기준).
@@ -95,6 +103,10 @@ seed/keywords.json      키워드 사전 (strong 21, weak 12, context 15, exclud
     - 제목은 로컬에서 키워드로 판정한다(`implicit_context`).
     - 상세의 예매처 목록(`relates`)은 `ticket_url`에 채운다.
     - KOPIS만으로 on_sale을 만들지 않는다.
+16. 첫 실행 처리: 기존 글이 전부 새 소식으로 잡히지 않도록 한다.
+    - html_diff: 첫 실행은 기준점만 기록하고 항목을 내지 않는다.
+    - rss, x_crawl: 첫 실행은 최근 30일 글만 낸다.
+    - ticket, kopis: 검색 결과가 미쿠 관련으로 좁혀져 있으므로 전부 낸다(지난 행사는 파이프라인에서 ended로 판정).
 
 ## 환경 변수
 
@@ -157,11 +169,9 @@ TZ=UTC
 
 ## 아직 확인되지 않은 것
 
-- PR TIMES 크립톤 기업 페이지(company_id 52709)의 RSS 제공 여부
-- 유튜브 39ch 채널 ID (첫 실행 때 페이지에서 추출)
 - 인스타그램 대상 계정이 비즈니스·크리에이터 계정인지
 - AGF 공식 사이트 URL, 팝가 검색·목록 URL
 - 프로세카 한국 서버(운영사 뉴버스) 공식 계정, 매지컬플레이 공식 채널
-- 예매처 4곳이 내부적으로 쓰는 JSON 요청 (찾으면 Playwright 대신 fetch로 교체)
+- NOL·YES24·티켓링크의 검색·티켓 오픈 공지 요청 형식 (멜론티켓은 확인 완료: 검색 GET, 오픈 소식 POST)
 - KOPIS: https 동작 여부, 오류 응답 형식, `afterdate`와 기간 파라미터를 같이 쓸 때의 동작, `relates` 하위 요소 구조
 - 알림 조건(지역·유형·공식성 등급). 정해지기 전까지는 모든 확정 행사를 공지 채널로 보낸다.

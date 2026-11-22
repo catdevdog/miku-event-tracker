@@ -18,6 +18,8 @@ export interface AdapterResult {
   items: RawItemInput[];
   /** since_id, etag, 페이지 해시 등. 주면 sources.state를 이 값으로 바꾼다. */
   state?: Record<string, unknown>;
+  /** 실패는 아니지만 관리자에게 알릴 내용 (호출량 초과 등) */
+  notes?: string[];
 }
 
 export interface AdapterContext {

@@ -92,6 +92,7 @@ export async function runSource(deps: RunDeps, source: Source): Promise<RunOutco
         })
         .where(eq(sources.id, source.id));
 
+      for (const note of result.notes ?? []) await alerter.alert(`${source.name}: ${note}`);
       if (source.consecutiveFailures >= FAILURE_ALERT_THRESHOLD) {
         await alerter.alert(`회복: ${source.name} (연속 실패 ${source.consecutiveFailures}회 후 성공)`);
       }
@@ -127,3 +128,21 @@ export async function closeInterruptedRuns(db: Db, now = new Date()): Promise<nu
     .returning({ id: jobRuns.id });
   return rows.length;
 }
+
+/**
+ * 마지막 실행이 'skipped'(어댑터 미구현)였던 소스는 다음 틱에 바로 돌도록 last_run_at을 비운다.
+ * 새 어댑터를 배포했을 때 주기(최대 하루)만큼 기다리지 않게 하기 위해서다.
+ */
+export async function resetSkippedSources(db: Db): Promise<number> {
+  const rows = await db.all<{ id: number }>(sql`
+    UPDATE sources SET last_run_at = NULL
+    WHERE last_run_at IS NOT NULL AND id IN (
+      SELECT jr.source_id FROM job_runs jr
+      WHERE jr.status = 'skipped'
+        AND jr.id = (SELECT max(id) FROM job_runs WHERE source_id = jr.source_id)
+    )
+    RETURNING id
+  `);
+  return rows.length;
+}
+

@@ -17,7 +17,7 @@ const now = sql`(datetime('now'))`;
 
 // CHECK 제약과 TS 타입이 같은 목록을 쓰도록 enum 값을 한곳에 둔다.
 export const LAYERS = ['L1', 'L2', 'L3', 'L4'] as const;
-export const ADAPTERS = ['rss', 'html_diff', 'playwright', 'x_crawl', 'instagram', 'kopis', 'naver'] as const;
+export const ADAPTERS = ['rss', 'html_diff', 'playwright', 'x_crawl', 'instagram', 'kopis', 'naver', 'ticket'] as const;
 export const SOURCE_REGIONS = ['KR', 'JP', 'GLOBAL'] as const;
 export const JOB_STATUSES = ['running', 'ok', 'error', 'skipped'] as const;
 export const KEYWORD_HITS = ['strong', 'weak', 'none'] as const;

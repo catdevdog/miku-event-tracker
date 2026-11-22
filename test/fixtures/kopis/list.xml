@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- docs/kopis.md(개발가이드 v5.0) 응답 명세의 필드로 만든 예시. 실제 응답 형식은 첫 호출 때 확인 -->
+<dbs>
+  <db>
+    <mt20id>PF270001</mt20id>
+    <prfnm>하츠네 미쿠 심포니 2027 in 서울</prfnm>
+    <prfpdfrom>2027.03.06</prfpdfrom>
+    <prfpdto>2027.03.07</prfpdto>
+    <fcltynm>롯데콘서트홀</fcltynm>
+    <poster>http://www.kopis.or.kr/upload/pfmPoster/PF_PF270001.jpg</poster>
+    <area>서울특별시</area>
+    <genrenm>서양음악(클래식)</genrenm>
+    <openrun>N</openrun>
+    <prfstate>공연예정</prfstate>
+  </db>
+  <db>
+    <mt20id>PF270002</mt20id>
+    <prfnm>반짝반짝 인어공주</prfnm>
+    <prfpdfrom>2027.01.10</prfpdfrom>
+    <prfpdto>2027.02.28</prfpdto>
+    <fcltynm>달밤엔씨어터</fcltynm>
+    <area>서울특별시</area>
+    <genrenm>뮤지컬</genrenm>
+    <openrun>N</openrun>
+    <prfstate>공연예정</prfstate>
+  </db>
+  <db>
+    <mt20id>PF270003</mt20id>
+    <prfnm>MIKU 라이브 투어</prfnm>
+    <prfpdfrom>2027.02.01</prfpdfrom>
+    <prfpdto>2027.02.01</prfpdto>
+    <fcltynm>예스24라이브홀</fcltynm>
+    <area>서울특별시</area>
+    <genrenm>대중음악</genrenm>
+    <openrun>N</openrun>
+    <prfstate>공연예정</prfstate>
+  </db>
+</dbs>

@@ -43,4 +43,9 @@ describe('loadConfig', () => {
     expect(c.DISCORD_BOT_TOKEN).toBe('abc.def.ghi');
     expect(loadConfig({ ...valid, KOPIS_SERVICE_KEY: "''" }).KOPIS_SERVICE_KEY).toBeUndefined();
   });
+
+  it('CLAUDE_API_KEY도 ANTHROPIC_API_KEY로 받는다', () => {
+    expect(loadConfig({ ...valid, CLAUDE_API_KEY: 'sk-ant-x' }).ANTHROPIC_API_KEY).toBe('sk-ant-x');
+    expect(loadConfig({ ...valid, CLAUDE_API_KEY: 'a', ANTHROPIC_API_KEY: 'b' }).ANTHROPIC_API_KEY).toBe('b');
+  });
 });

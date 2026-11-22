@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+ <link rel="self" href="http://www.youtube.com/feeds/videos.xml?channel_id=UCJwGWV914kBlV4dKRn7AEFA"/>
+ <id>yt:channel:JwGWV914kBlV4dKRn7AEFA</id>
+ <yt:channelId>JwGWV914kBlV4dKRn7AEFA</yt:channelId>
+ <title>Hatsune Miku</title>
+ <link rel="alternate" href="https://www.youtube.com/channel/UCJwGWV914kBlV4dKRn7AEFA"/>
+ <author>
+  <name>Hatsune Miku</name>
+  <uri>https://www.youtube.com/channel/UCJwGWV914kBlV4dKRn7AEFA</uri>
+ </author>
+ <published>2007-10-01T03:04:52+00:00</published>
+ <entry>
+  <id>yt:video:2rg8wNZZqpc</id>
+  <yt:videoId>2rg8wNZZqpc</yt:videoId>
+  <yt:channelId>UCJwGWV914kBlV4dKRn7AEFA</yt:channelId>
+  <title>初音ミク「マジカルミライ 2026」楽曲コンテスト グランプリ曲『こたえて / imie』ミクのフォーカス映像を少しだけお届け！✨️</title>
+  <link rel="alternate" href="https://www.youtube.com/shorts/2rg8wNZZqpc"/>
+  <author>
+   <name>Hatsune Miku</name>
+   <uri>https://www.youtube.com/channel/UCJwGWV914kBlV4dKRn7AEFA</uri>
+  </author>
+  <published>2026-11-22T03:00:40+00:00</published>
+  <updated>2026-11-22T03:00:43+00:00</updated>
+  <media:group>
+   <media:title>初音ミク「マジカルミライ 2026」楽曲コンテスト グランプリ曲『こたえて / imie』ミクのフォーカス映像を少しだけお届け！✨️</media:title>
+   <media:thumbnail url="https://i3.ytimg.com/vi/2rg8wNZZqpc/hqdefault.jpg" width="480" height="360"/>
+   <media:description>初音ミク「マジカルミライ 2027」楽曲コンテスト
+募集期間は2026年12月14日(月) 17:00まで</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:JG-gHGNIhVY</id>
+  <yt:videoId>JG-gHGNIhVY</yt:videoId>
+  <yt:channelId>UCJwGWV914kBlV4dKRn7AEFA</yt:channelId>
+  <title>新曲「メモリ」をミクが踊ってみた</title>
+  <link rel="alternate" href="https://www.youtube.com/shorts/JG-gHGNIhVY"/>
+  <author>
+   <name>Hatsune Miku</name>
+   <uri>https://www.youtube.com/channel/UCJwGWV914kBlV4dKRn7AEFA</uri>
+  </author>
+  <published>2026-11-21T09:00:18+00:00</published>
+  <updated>2026-11-21T09:00:20+00:00</updated>
+  <media:group>
+   <media:title>新曲「メモリ」をミクが踊ってみた</media:title>
+   <media:thumbnail url="https://i3.ytimg.com/vi/JG-gHGNIhVY/hqdefault.jpg" width="480" height="360"/>
+   <media:description>39ch Originals New Release
+「メモリ / 東京真中 feat. 初音ミク」</media:description>
+  </media:group>
+ </entry>
+</feed>

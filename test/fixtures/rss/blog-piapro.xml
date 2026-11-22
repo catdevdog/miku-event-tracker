@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"
+	xmlns:content="http://purl.org/rss/1.0/modules/content/"
+	xmlns:wfw="http://wellformedweb.org/CommentAPI/"
+	xmlns:dc="http://purl.org/dc/elements/1.1/"
+	xmlns:atom="http://www.w3.org/2005/Atom"
+	xmlns:sy="http://purl.org/rss/1.0/modules/syndication/"
+	xmlns:slash="http://purl.org/rss/1.0/modules/slash/"
+	>
+
+<channel>
+	<title>初音ミク公式ブログ</title>
+	<atom:link href="https://blog.piapro.net/feed" rel="self" type="application/rss+xml" />
+	<link>https://blog.piapro.net</link>
+	<description>クリプトン公式！「初音ミク」らバーチャルシンガーの最新情報を発信します！</description>
+	<lastBuildDate>Fri, 20 Nov 2026 08:56:01 +0000</lastBuildDate>
+	<language>ja</language>
+	<generator>https://wordpress.org/?v=7.1.5</generator>
+	<item>
+		<title>「雪ミク電車」運行直前のお知らせ！運行期間は11月21日（土）～2027年3月21日（日）まで！</title>
+		<link>https://blog.piapro.net/2026/11/hs2611201.html</link>
+		<dc:creator><![CDATA[Crypton Future Media, INC.]]></dc:creator>
+		<pubDate>Fri, 20 Nov 2026 09:30:57 +0000</pubDate>
+		<category><![CDATA[イベント]]></category>
+		<category><![CDATA[SNOW MIKU]]></category>
+		<guid isPermaLink="false">https://blog.piapro.net/?p=107095</guid>
+		<description><![CDATA[今冬も「雪ミク電車」が11月21日（土）から2027年3月21日（日）&#8230; <a href="https://blog.piapro.net/2026/11/hs2611201.html" class="more-link">続きを読む</a>]]></description>
+		<content:encoded><![CDATA[<p>(본문 생략)</p>]]></content:encoded>
+	</item>
+	<item>
+		<title>「フリューくじ 初音ミク ミクめくJKライフ〜かわいいフード巡り〜」11月28日（土）より順次発売！</title>
+		<link>https://blog.piapro.net/2026/11/hm2611201.html</link>
+		<dc:creator><![CDATA[Crypton Future Media, INC.]]></dc:creator>
+		<pubDate>Fri, 20 Nov 2026 08:00:23 +0000</pubDate>
+		<category><![CDATA[グッズ]]></category>
+		<guid isPermaLink="false">https://blog.piapro.net/?p=106832</guid>
+		<description><![CDATA[「フリューくじ 初音ミク ミクめくJKライフ〜かわいいフード巡り〜」が 11月28日（土）より順次発売！&#8230;]]></description>
+		<content:encoded><![CDATA[<p>(본문 생략)</p>]]></content:encoded>
+	</item>
+	<item>
+		<title>Microsoft Store「BLACK FRIDAY SALE」開催！</title>
+		<link>https://blog.piapro.net/2026/11/mcs2026112001.html</link>
+		<dc:creator><![CDATA[Crypton Future Media, INC.]]></dc:creator>
+		<pubDate>Fri, 20 Nov 2026 06:00:43 +0000</pubDate>
+		<category><![CDATA[デジコン]]></category>
+		<guid isPermaLink="false">https://blog.piapro.net/?p=107183</guid>
+		<description><![CDATA[本日から「Microsoft Store」で「CRYPTON FUTURE MEDIA GAMES」のゲームがお得に購入できる『BLACK FRIDAY SALE』開催！&#8230;]]></description>
+		<content:encoded><![CDATA[<p>(본문 생략)</p>]]></content:encoded>
+	</item>
+</channel>
+</rss>

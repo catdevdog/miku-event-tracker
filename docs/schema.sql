@@ -8,7 +8,7 @@ CREATE TABLE sources (
   id                   INTEGER PRIMARY KEY,
   name                 TEXT    NOT NULL UNIQUE,          -- 시드 기준 키
   layer                TEXT    NOT NULL CHECK (layer IN ('L1','L2','L3','L4')),
-  adapter              TEXT    NOT NULL CHECK (adapter IN ('rss','html_diff','playwright','x_crawl','instagram','kopis','naver')),
+  adapter              TEXT    NOT NULL CHECK (adapter IN ('rss','html_diff','playwright','x_crawl','instagram','kopis','naver','ticket')),
   target               TEXT    NOT NULL,                 -- URL, X 핸들, 인스타 계정, 검색어
   region               TEXT    NOT NULL CHECK (region IN ('KR','JP','GLOBAL')),
   interval_min         INTEGER NOT NULL,                 -- 평시 주기

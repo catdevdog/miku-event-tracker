@@ -8,6 +8,13 @@
       "when": 1795354181195,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1795356626173,
+      "tag": "0001_adapter_ticket",
+      "breakpoints": true
     }
   ]
 }
