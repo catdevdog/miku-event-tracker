@@ -1,0 +1,30 @@
+{
+  "_comment": "명세 기반 예시. NAVER API HUB 문서(2026-11-22 확인)의 뉴스 응답 필드(title, originallink, link, description, pubDate)로 만든 샘플이다. 실제 첫 호출 응답으로 바꿔야 한다. 기사 내용은 가상이다.",
+  "lastBuildDate": "Mon, 23 Nov 2026 01:20:00 +0900",
+  "total": 3,
+  "start": 1,
+  "display": 3,
+  "items": [
+    {
+      "title": "&quot;<b>하츠네 미쿠</b>&quot; 3D 무대, 원더리벳 2026서 국내 첫선",
+      "originallink": "https://www.example-news.co.kr/news/articleView.html?idxno=1001",
+      "link": "https://n.news.naver.com/mnews/article/003/0000001001",
+      "description": "J-POP 페스티벌 원더리벳 2026에서 <b>하츠네 미쿠</b>와 카사네 테토의 3D 버추얼 협업 무대가 열린다. 킨텍스 제2전시장 &amp; WONDER STAGE.",
+      "pubDate": "Sun, 22 Nov 2026 18:30:00 +0900"
+    },
+    {
+      "title": "<b>하츠네 미쿠</b> 팝업, 홍대서 12월 개최",
+      "originallink": "https://www.example-news.co.kr/news/articleView.html?idxno=1000",
+      "link": "https://www.example-news.co.kr/news/articleView.html?idxno=1000",
+      "description": "버추얼 싱어 <b>하츠네 미쿠</b> 팝업 스토어가 12월 홍대에서 열린다.",
+      "pubDate": "Fri, 20 Nov 2026 09:00:00 +0900"
+    },
+    {
+      "title": "지난해 <b>하츠네 미쿠</b> 첫 내한 공연 리뷰",
+      "originallink": "https://www.example-news.co.kr/news/articleView.html?idxno=900",
+      "link": "https://www.example-news.co.kr/news/articleView.html?idxno=900",
+      "description": "<b>하츠네 미쿠</b> 엑스포 2025 인 서울 리뷰.",
+      "pubDate": "Sat, 06 Dec 2025 11:32:27 +0900"
+    }
+  ]
+}

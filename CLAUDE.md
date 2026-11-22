@@ -41,7 +41,8 @@ src/
     render.ts           Playwright 렌더링 (config.render=true인 소스만)
     ticket.ts           예매처 (멜론티켓 검색·티켓오픈소식 구현, NOL·YES24·티켓링크 미구현)
     kopis.ts  xCrawl.ts
-    instagram.ts  naver.ts   (6단계)
+    naver.ts            네이버 검색 (docs/naver.md). 뉴스·블로그·카페글 × 검색어, 본 글이 나올 때까지 페이지 넘김
+    instagram.ts        (6단계)
   pipeline/
     index.ts            1분마다: pending 원문 처리 → 시간 경과 상태 전이 → 리마인더 → 알림 발송 (job lock 'pipeline')
     keywordFilter.ts    keywords 테이블 기반 판정 (NFKC·소문자·공백 무시)
@@ -49,6 +50,7 @@ src/
     extract.ts          Claude 판정·추출 (tool use, strict 스키마 + zod 검증), 단가
     merge.ts            dedup_key 생성, 병합(제목 유사도 보조), parent_event_id 연결, 시간 경과 상태 갱신
     state.ts            상태 계산(앞으로만 진행) + event_state_log
+    purge.ts            보관 기한(purge_after) 지난 원문 삭제 (파이프라인 틱에서 하루 1회, job lock 'purge_daily')
   notify/
     discord.ts          봇 클라이언트(로그인 재시도), 채널 발송(카드 → 거부 시 임베드), 슬래시 명령·버튼 처리, 봇 상태 메시지
     commands.ts         슬래시 명령 정의와 응답 (/ping /소스 /최근수집 /행사 /점검)
@@ -72,7 +74,7 @@ docs/kopis.md           KOPIS 어댑터 명세 (원문 PDF는 docs/kopis/)
 docs/naver.md           네이버 검색(NAVER API HUB) 어댑터 명세
 seed/sources.json       소스 34개 (enabled=false 6개: URL·계정 또는 요청 형식 미확인)
 seed/keywords.json      키워드 사전 (strong 22, weak 12, context 19, exclude 2)
-test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 수집, 일부는 명세 기반 예시라고 파일에 표시)
+test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 수집, 일부는 명세 기반 예시라고 파일에 표시. kopis/, naver/는 명세 기반 예시)
 ```
 
 ## 핵심 규칙
@@ -109,6 +111,7 @@ test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 
     - 메인 계정 쿠키는 절대 쓰지 않는다.
     - 현재 구현은 게스트 → 쿠키 두 단계. Playwright 단계는 두 경로가 모두 막히는 경우가 생기면 추가한다.
 11. 어댑터가 연속 3회 실패하면(`consecutive_failures >= 3`) 관리자 경보 채널로 한 번 알리고, 회복하면 회복 알림을 보낸다. 쿠키 만료도 같은 경로로 알린다.
+    - 키 오류·구독 안 함·요청 형식 오류처럼 재시도해도 같은 오류는 어댑터가 `AlertNowError`로 던지고, 러너가 첫 실패에서 바로 알린다(같은 문구는 30분 중복 억제).
 12. boost 주기: L2 소스에 연결된 행사의 start_date가 60일 이내이면 `boost_interval_min`을 쓴다.
 13. LLM 호출마다 `llm_calls`에 토큰 수와 비용을 기록한다. 100만 토큰당 단가: Haiku 5.5 입력 $0.10·출력 $0.50(10만 토큰 이하 프롬프트 기준), Sonnet 5.5 입력 $2·출력 $10. 단가는 `pipeline/extract.ts`의 PRICING에 있다.
 14. `seed/sources.json`에서 `enabled=false`이거나 `target="TODO"`인 소스는 스케줄러에 올리지 않는다.
@@ -121,6 +124,7 @@ test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 
 16. 첫 실행 처리: 기존 글이 전부 새 소식으로 잡히지 않도록 한다.
     - html_diff: 첫 실행은 기준점만 기록하고 항목을 내지 않는다.
     - rss, x_crawl: 첫 실행은 최근 30일 글만 낸다.
+    - naver: (검색어, 종류) 조합마다 첫 실행은 첫 페이지 중 최근 14일 글만 낸다. 날짜가 없는 카페글은 기준점만 잡는다.
     - ticket, kopis: 검색 결과가 미쿠 관련으로 좁혀져 있으므로 전부 낸다(지난 행사는 파이프라인에서 ended로 판정).
 
 ## 환경 변수

@@ -60,7 +60,8 @@ export function scheduleLines(plan: CollectionPlanRow[]): { active: string[]; bo
 export function buildGuideReply(plan: CollectionPlanRow[]): OutgoingMessage {
   const { active, boost, idle } = scheduleLines(plan);
   const runningCount = plan.filter((p) => p.schedulable && p.implemented).length;
-  const socialIdle = plan.some((p) => (p.adapter === 'naver' || p.adapter === 'instagram') && !(p.schedulable && p.implemented));
+  // 국내 팝업·카페 공지가 많은 채널 중 아직 수집하지 않는 것 (네이버 검색, 인스타그램)
+  const socialIdle = [...new Set(plan.filter((p) => (p.adapter === 'naver' || p.adapter === 'instagram') && !(p.schedulable && p.implemented)).map((p) => ADAPTER_KO[p.adapter]!))];
 
   return {
     embeds: [
@@ -88,7 +89,7 @@ export function buildGuideReply(plan: CollectionPlanRow[]): OutgoingMessage {
       {
         title: '🔄 이렇게 동작해요',
         description: [
-          '**1. 수집**　공식 사이트 · X · RSS · 예매처 · KOPIS를 정해진 주기로 확인해 **새 글만** 가져와요.',
+          '**1. 수집**　공식 사이트 · X · RSS · 예매처 · KOPIS · 네이버 뉴스·블로그·카페를 정해진 주기로 확인해 **새 글만** 가져와요.',
           '**2. 키워드 거르기**　`하츠네 미쿠` `프로세카` 같은 확실한 단어가 있으면 통과. `미쿠`처럼 애매한 단어는 `팝업` `콘서트` 같은 단어와 같이 있을 때만 통과해요.',
           '**3. Claude 판정**　남은 글을 Claude가 읽고 실제로 갈 수 있는 행사인지, 일정 · 장소 · 티켓 오픈 시각을 뽑아요. 확신이 낮으면 더 큰 모델로 한 번 더 보고, 그래도 애매하면 **검수 대기**로 두고 알리지 않아요.',
           '**4. 합치기**　여러 곳에서 온 같은 행사 소식은 하나로 합쳐요.',
@@ -109,7 +110,7 @@ export function buildGuideReply(plan: CollectionPlanRow[]): OutgoingMessage {
             : []),
           '',
           '사이트 변경 감지는 **처음 볼 때 기준만 잡고** 알리지 않아요. 그 뒤로 새로 올라온 내용부터 잡혀요.',
-          'X · RSS는 처음 볼 때 최근 30일 글만 가져와요.',
+          'X · RSS는 처음 볼 때 최근 30일, 네이버는 최근 14일 글만 가져와요. 네이버 검색 결과는 20일 뒤 지워요.',
         ].join('\n'),
         color: C.time,
       },
@@ -140,7 +141,7 @@ export function buildGuideReply(plan: CollectionPlanRow[]): OutgoingMessage {
       {
         title: '⚠️ 알아 두세요',
         description: [
-          ...(socialIdle ? ['국내 팝업 · 콜라보 카페는 주로 인스타그램 · 네이버로 공지되는데, 아직 연결 전이라 늦거나 놓칠 수 있어요.'] : []),
+          ...(socialIdle.length ? [`국내 팝업 · 콜라보 카페 공지가 많은 ${socialIdle.join(' · ')}은 아직 연결 전이라 늦거나 놓칠 수 있어요.`] : []),
           ...(idle ? [`아직 확인하지 않는 곳: ${idle}`] : []),
           '예매 전에는 꼭 공지의 원문 · 예매 링크를 확인하세요.',
         ].join('\n'),

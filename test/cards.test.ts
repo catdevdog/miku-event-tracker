@@ -122,6 +122,8 @@ describe('/행사 카드', () => {
     withinLimits(last);
     expect((last as unknown as Node[]).filter((n) => n.type === 17)).toHaveLength(4);
     expect(flat(last).filter((n) => n.type === 2).slice(-1)[0]).toMatchObject({ custom_id: 'ev:domestic:3', disabled: true });
+    const firstText = flat(eventsCard(rows, 'all', 0, links)).find((n) => n.type === 10 && n.content!.startsWith('### '))!.content!;
+    expect(firstText.split('\n').slice(1, 3)).toEqual(['📅 2027.03.06(토) ~ 03.07(일)', '📍 서울 · 올림픽홀']);
     const empty = eventsCard([], 'japan', 0, new Map());
     expect(flat(empty).map((n) => n.content ?? '').join('\n')).toContain('조건에 맞는 다가오는 행사가 없어요');
     expect(parseEventsPageId('ev:japan:2')).toEqual({ scope: 'japan', page: 2 });

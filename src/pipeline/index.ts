@@ -17,7 +17,8 @@ import {
   type Extractor,
 } from './extract.js';
 import { mergeExtraction, sweepStatuses } from './merge.js';
-import { fetchPageText } from './pageText.js';
+import { purgeExpiredItems } from './purge.js';
+import { fetchPageText, naverReadableUrl } from './pageText.js';
 import { planForChange } from '../notify/planner.js';
 import { planReminders } from '../notify/reminders.js';
 import { sendQueued, type DmSender } from '../notify/sender.js';
@@ -33,6 +34,9 @@ const SHORT_BODY = 500;
  * x_crawl(트윗 주소는 본문을 못 가져옴), kopis(상세 API로 따로 처리), naver(규칙 9)는 뺀다.
  */
 const PAGE_RECHECK_ADAPTERS = new Set(['html_diff', 'rss', 'ticket']);
+
+/** 네이버 검색 결과의 원문 페이지가 이보다 짧으면 본문을 못 가져온 것으로 본다 */
+const NAVER_MIN_PAGE = 200;
 
 export interface PipelineDeps {
   db: Db;
@@ -102,9 +106,11 @@ export async function processPendingItems(deps: PipelineDeps): Promise<ProcessRe
         // 키워드 재판정에서 이미 원문 페이지를 가져왔다
       } else if (source.adapter === 'naver') {
         if (!item.url) throw new SkipItem();
-        body = await fetchPage(item.url).catch(() => {
+        body = await fetchPage(naverReadableUrl(item.url)).catch(() => {
           throw new SkipItem(); // 회원 전용 카페 글 등
         });
+        // 본문을 못 가져온 경우(회원 전용 카페 글은 제목·메뉴만 옴)는 LLM을 건너뛴다 (docs/naver.md 4)
+        if (body.length < NAVER_MIN_PAGE) throw new SkipItem();
       } else if (item.url && body.length < SHORT_BODY && (source.adapter === 'html_diff' || source.adapter === 'rss')) {
         body = await fetchPage(item.url).catch(() => body);
       }
@@ -194,6 +200,11 @@ export function createPipelineRunner(deps: PipelineRunnerDeps) {
   async function tick() {
     if (!(await acquireLock(deps.db, 'pipeline', owner, 15, now()))) return null;
     try {
+      // 하루 1회: 보관 기한(purge_after)이 지난 원문 삭제 (네이버 검색 결과, 규칙 9). 락을 풀지 않아 24시간에 한 번만 돈다.
+      if (await acquireLock(deps.db, 'purge_daily', owner, 24 * 60, now())) {
+        const purged = await purgeExpiredItems(deps.db, now());
+        if (purged > 0) console.log(`보관 기한이 지난 원문 ${purged}건 삭제`);
+      }
       const processed = await processPendingItems(deps);
       let queued = processed.queued;
       for (const { event } of await sweepStatuses(deps.db, now())) {

@@ -1,0 +1,25 @@
+{
+  "_comment": "명세 기반 예시. NAVER API HUB 문서(2026-11-22 확인)의 블로그 응답 필드(title, link, description, bloggername, bloggerlink, postdate)로 만든 샘플이다. 실제 첫 호출 응답으로 바꿔야 한다. 글 내용은 가상이다.",
+  "lastBuildDate": "Mon, 23 Nov 2026 01:20:00 +0900",
+  "total": 2,
+  "start": 1,
+  "display": 2,
+  "items": [
+    {
+      "title": "원더리벳 2026 둘째 날 후기 (<b>하츠네 미쿠</b> 무대)",
+      "link": "https://blog.naver.com/mikufan39/224000000001",
+      "description": "TAK with <b>하츠네 미쿠</b> &amp; 카사네 테토 무대 후기입니다.",
+      "bloggername": "파 한 단",
+      "bloggerlink": "blog.naver.com/mikufan39",
+      "postdate": "20261122"
+    },
+    {
+      "title": "<b>하츠네 미쿠</b> 피규어 언박싱",
+      "link": "https://blog.naver.com/figurelover/224000000000",
+      "description": "넨도로이드 <b>하츠네 미쿠</b> 개봉기.",
+      "bloggername": "피규어 일기",
+      "bloggerlink": "blog.naver.com/figurelover",
+      "postdate": "20260930"
+    }
+  ]
+}

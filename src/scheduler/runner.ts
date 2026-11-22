@@ -1,7 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { jobRuns, rawItems, sources, type Source } from '../db/schema.js';
-import type { AdapterRegistry } from '../adapters/types.js';
+import { AlertNowError, type AdapterRegistry } from '../adapters/types.js';
 import type { Alerter } from '../alerts.js';
 import { toIso } from '../lib/time.js';
 import { acquireLock, releaseLock } from './lock.js';
@@ -108,8 +108,11 @@ export async function runSource(deps: RunDeps, source: Source): Promise<RunOutco
         .set({ consecutiveFailures: sql`${sources.consecutiveFailures} + 1` })
         .where(eq(sources.id, source.id))
         .returning({ failures: sources.consecutiveFailures });
-      // 임계값에 처음 닿을 때 한 번만 알린다.
-      if (updated?.failures === FAILURE_ALERT_THRESHOLD) {
+      // 키·요청 형식 오류처럼 재시도해도 안 되는 오류는 바로 알린다.
+      if (err instanceof AlertNowError) {
+        await alerter.alert(`수집 오류: ${source.name}\n${message.slice(0, 500)}`);
+      } else if (updated?.failures === FAILURE_ALERT_THRESHOLD) {
+        // 임계값에 처음 닿을 때 한 번만 알린다.
         await alerter.alert(`수집 실패 ${FAILURE_ALERT_THRESHOLD}회 연속: ${source.name}\n${message.slice(0, 500)}`);
       }
       return 'error';

@@ -22,6 +22,17 @@ export interface AdapterResult {
   notes?: string[];
 }
 
+/**
+ * 재시도해도 같은 결과가 나는 오류(키 오류, 구독 안 함, 요청 형식 오류 등).
+ * 러너는 실패 횟수를 세는 것과 별개로 관리자 경보를 바로 보낸다(같은 문구는 30분 중복 억제).
+ */
+export class AlertNowError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'AlertNowError';
+  }
+}
+
 export interface AdapterContext {
   now: Date;
   /** 이전 실행이 남긴 sources.state */

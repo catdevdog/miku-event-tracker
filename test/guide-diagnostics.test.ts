@@ -49,8 +49,9 @@ describe('/가이드', () => {
     expect(active[0]).toContain('X 계정 7곳 (±10분)');
     expect(active.some((l) => l.startsWith('**하루 1번**') && l.includes('KOPIS 공연목록 1곳'))).toBe(true);
     expect(boost.join('\n')).toContain('일러스타 페스');
-    for (const name of ['네이버 검색', 'NOL 티켓', '인스타그램 @animatecafe_korea', 'AGF 공식 사이트']) expect(idle).toContain(name);
-    expect(idle).not.toContain('멜론티켓');
+    for (const name of ['NOL 티켓', '인스타그램 @animatecafe_korea', 'AGF 공식 사이트']) expect(idle).toContain(name);
+    for (const name of ['멜론티켓', '네이버 검색']) expect(idle).not.toContain(name);
+    expect(active[0]).toContain('네이버 검색 1곳');
   });
 
   it('임베드가 디스코드 제한 안에 들어간다', async () => {
@@ -58,7 +59,7 @@ describe('/가이드', () => {
     expectWithinDiscordLimits(m);
     const text = JSON.stringify(m);
     for (const cmd of ['/행사', '/소스', '/최근수집', '/점검', '/ping', '/가이드']) expect(text).toContain(cmd);
-    expect(text).toContain('인스타그램 · 네이버로 공지되는데');
+    expect(text).toContain('공지가 많은 인스타그램은 아직 연결 전');
   });
 
   it('인스타그램·네이버가 모두 수집되면 연결 전 안내를 빼고, 시드의 어댑터는 모두 이름이 있다', async () => {
@@ -66,7 +67,7 @@ describe('/가이드', () => {
     expect(JSON.stringify(buildGuideReply(plan))).not.toContain('연결 전');
     const adapters = new Set(readSeedFiles().sources.map((s) => s.adapter));
     for (const a of adapters) expect(JSON.stringify(scheduleLines(plan).active)).not.toContain(`**　${a} `);
-    expect(IMPLEMENTED_ADAPTERS).toEqual(['rss', 'html_diff', 'ticket', 'kopis', 'x_crawl']);
+    expect(IMPLEMENTED_ADAPTERS).toEqual(['rss', 'html_diff', 'ticket', 'kopis', 'x_crawl', 'naver']);
   });
 });
 
@@ -75,8 +76,8 @@ describe('/점검', () => {
     const [melon] = await t.db.select().from(sources).where(eq(sources.name, '멜론티켓'));
     await t.db.update(sources).set({ lastSuccessAt: '2026-11-22T14:00:00.000Z' }).where(eq(sources.id, melon!.id));
     await t.db.insert(jobRuns).values({ sourceId: melon!.id, startedAt: '2026-11-22T14:00:00.000Z', status: 'ok', itemsNew: 3 });
-    const [naver] = await t.db.select().from(sources).where(eq(sources.name, '네이버 검색 (뉴스·블로그·카페)'));
-    await t.db.insert(jobRuns).values({ sourceId: naver!.id, startedAt: '2026-11-22T14:00:00.000Z', status: 'skipped' });
+    const [insta] = await t.db.select().from(sources).where(eq(sources.name, '인스타그램 @animatecafe_korea'));
+    await t.db.insert(jobRuns).values({ sourceId: insta!.id, startedAt: '2026-11-22T14:00:00.000Z', status: 'skipped' });
 
     const mk = (n: number, keywordHit: 'strong' | 'none', llmStatus: 'done' | 'skipped' | 'pending') =>
       t.db.insert(rawItems).values({ sourceId: melon!.id, externalId: `m${n}`, title: `t${n}`, contentHash: 'h', keywordHit, llmStatus }).returning();
@@ -98,7 +99,8 @@ describe('/점검', () => {
     ]);
     const melonRow = d.krSources.find((r) => r.name === '멜론티켓')!;
     expect(melonRow).toMatchObject({ collected: 3, passed: 2, extracted: 1, linked: 1, implemented: true, schedulable: true, lastJobStatus: 'ok' });
-    expect(d.krSources.find((r) => r.adapter === 'naver')).toMatchObject({ implemented: false, lastJobStatus: 'skipped' });
+    expect(d.krSources.find((r) => r.adapter === 'instagram')).toMatchObject({ implemented: false, lastJobStatus: 'skipped' });
+    expect(d.krSources.find((r) => r.adapter === 'naver')).toMatchObject({ implemented: true });
     expect(d.pendingItems).toBe(1);
 
     const m = buildDiagnosticsReply(d);
@@ -108,7 +110,7 @@ describe('/점검', () => {
     expect(first!.description).toContain('종료  25.11.29~11.30  HATSUNE MIKU EXPO 2025 in Seoul');
     expect(second!.description).toContain('가져온 글 3 → 키워드 통과 2 → Claude 판정 1 → 행사 연결 1');
     expect(second!.description).toContain('정상  3     2     1     1     멜론티켓');
-    expect(second!.description).toContain('준비  0     0     0     0     네이버 검색');
+    expect(second!.description).toContain('준비  0     0     0     0     인스타그램 @animatecafe_korea');
     expect(second!.description).toContain('꺼짐  0     0     0     0     NOL 티켓');
   });
 

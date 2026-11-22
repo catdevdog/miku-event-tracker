@@ -57,3 +57,18 @@
 4. 키워드를 통과한 글은 `link`의 원문 페이지를 다시 가져와 그 본문을 LLM에 넘긴다. 네이버 검색 결과(title, description)는 LLM 입력에 넣지 않는다.
     - 카페글은 회원만 볼 수 있어 원문을 가져오지 못하는 경우가 있다. 그때는 LLM을 건너뛰고 관리 화면 검수 목록에 링크만 올린다.
 5. 매일 1회 `purge_after`가 지난 행을 삭제한다.
+
+## 구현 메모 (2026-11-23)
+
+`src/adapters/naver.ts`, `src/pipeline/index.ts`, `src/pipeline/purge.ts`
+
+- 응답 필드(문서 기준): 뉴스 `title, originallink, link, description, pubDate`(RFC 1123, +0900), 블로그 `title, link, description, bloggername, bloggerlink, postdate`(YYYYMMDD), 카페글 `title, link, description, cafename, cafeurl`(날짜 없음).
+- fixture(`test/fixtures/naver/`)는 이 개발 환경에서 API에 접속할 수 없어 문서 필드로 만든 예시다. 운영에서 첫 응답을 받으면 실제 응답으로 바꾼다.
+- 상태(`sources.state`): `combos["<종류>:<검색어>"].seen`에 최근 본 link 300개, 429 뒤에는 `blocked_until`(다음 날 0시 KST).
+- 첫 실행: 조합마다 첫 페이지만 보고 최근 14일(`first_run_days`) 글만 낸다. 날짜가 없는 카페글은 기준점만 잡는다.
+- 같은 link가 여러 검색어에 걸리면 한 번만 낸다(`external_id = link`).
+- 오류 처리: 401·403·400·404는 `AlertNowError`(첫 실패에서 바로 관리자 경보), 500은 일반 실패(3회 연속이면 경보), 429는 그때까지 모은 글과 상태를 저장하고 다음 날 0시(KST)까지 건너뛴다.
+- 키가 없으면(`NAVER_CLIENT_ID`·`NAVER_CLIENT_SECRET`) 실행마다 실패로 집계되고 3회째에 한 번 알린다.
+- 원문 페이지: 블로그 `blog.naver.com/{id}/{logNo}`는 본문이 iframe 안에 있어 `PostView.naver?blogId=&logNo=`로 가져온다. 가져온 본문이 200자 미만이면(회원 전용 카페글 등) LLM을 건너뛰고 `llm_status='skipped'`로 둔다. 검수 목록에 링크를 올리는 것은 관리 화면(5단계)에서 붙인다.
+- 삭제: 파이프라인 틱에서 하루 1회(job lock `purge_daily`, 24시간) `purge_after`가 지난 원문을 지운다. 원문을 가리키는 `event_sources`는 지우고, `event_state_log`·`llm_calls`는 `raw_item_id`만 비운다. 행사는 남는다.
+- 공지·`/행사`의 원문 링크에는 네이버 검색 결과 link를 쓰지 않는다(기존 규칙).

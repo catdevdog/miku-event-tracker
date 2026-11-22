@@ -269,9 +269,21 @@ describe('processPendingItems', () => {
   it('네이버 원문은 검색 결과 대신 원문 페이지를 LLM에 넘긴다 (규칙 9)', async () => {
     await rawItem('네이버 검색 (뉴스·블로그·카페)', { title: '하츠네 미쿠 팝업 후기', body: '검색 결과 요약 하츠네 미쿠', url: 'https://blog.naver.com/x/1' });
     const ex = fakeExtractor({ 'claude-haiku-5-5': ext({ kind: 'popup' }) });
-    await processPendingItems({ db: t.db, extractor: ex, alerter, now: () => NOW, fetchPage: async () => '원문 페이지 본문' });
-    expect(ex.calls[0]!.input.body).toBe('원문 페이지 본문');
+    const page = `원문 페이지 본문 ${'내용 '.repeat(100)}`;
+    await processPendingItems({ db: t.db, extractor: ex, alerter, now: () => NOW, fetchPage: async () => page });
+    expect(ex.calls[0]!.input.body).toBe(page);
     expect(ex.calls[0]!.input.title).toBeNull();
+  });
+
+  it('네이버 블로그는 PostView 주소로 본문을 가져오고, 본문이 너무 짧으면(회원 전용 카페 등) LLM을 건너뛴다', async () => {
+    await rawItem('네이버 검색 (뉴스·블로그·카페)', { title: '하츠네 미쿠 팝업 후기', body: '하츠네 미쿠', url: 'https://blog.naver.com/mikufan39/224000000001' });
+    await rawItem('네이버 검색 (뉴스·블로그·카페)', { title: '하츠네 미쿠 카페 예약', body: '하츠네 미쿠', url: 'https://cafe.naver.com/vocaloidkr/123456' });
+    const ex = fakeExtractor({ 'claude-haiku-5-5': ext({ kind: 'popup' }) });
+    const fetchPage = vi.fn(async (u: string) => (u.includes('PostView') ? `하츠네 미쿠 팝업 후기 ${'본문 '.repeat(100)}` : '네이버 카페'));
+    const r = await processPendingItems({ db: t.db, extractor: ex, alerter, now: () => NOW, fetchPage });
+    expect(fetchPage.mock.calls.map((c) => c[0])).toEqual(['https://blog.naver.com/PostView.naver?blogId=mikufan39&logNo=224000000001', 'https://cafe.naver.com/vocaloidkr/123456']);
+    expect(ex.calls).toHaveLength(1);
+    expect(r.skipped).toBe(1);
   });
 
   it('본문이 짧은 링크 항목은 원문 페이지를 가져온다', async () => {

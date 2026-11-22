@@ -387,7 +387,9 @@
         "프로세카 콜라보",
         "보컬로이드 공연"
       ],
-      "purge_days": 20
+      "purge_days": 20,
+      "first_run_days": 14,
+      "request_delay_ms": 200
     }
   },
   {

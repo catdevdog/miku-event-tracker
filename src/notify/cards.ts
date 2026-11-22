@@ -158,7 +158,8 @@ function eventBlock(e: EventRow, link: string | undefined): ContainerBuilder {
       : '';
   const text = [
     `### ${region.flag} ${esc(e.title)}`,
-    `📅 ${formatPeriodKo(e.startDate, e.endDate)}${place ? `　📍 ${esc(place)}` : ''}`,
+    `📅 ${formatPeriodKo(e.startDate, e.endDate)}`,
+    ...(place ? [`📍 ${esc(place)}`] : []),
     `${STATUS_ICON[e.status] ?? '📢'} **${STATUS_KO[e.status] ?? e.status}**${ticket}`,
     `-# ${KIND_KO[e.kind] ?? e.kind} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}`,
   ].join('\n');

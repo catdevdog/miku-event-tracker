@@ -1,0 +1,16 @@
+{
+  "_comment": "명세 기반 예시. NAVER API HUB 문서(2026-11-22 확인)의 카페글 응답 필드(title, link, description, cafename, cafeurl, 날짜 없음)로 만든 샘플이다. 실제 첫 호출 응답으로 바꿔야 한다. 글 내용은 가상이다.",
+  "lastBuildDate": "Mon, 23 Nov 2026 01:20:00 +0900",
+  "total": 1,
+  "start": 1,
+  "display": 1,
+  "items": [
+    {
+      "title": "<b>하츠네 미쿠</b> 콜라보 카페 예약 정보 공유",
+      "link": "https://cafe.naver.com/vocaloidkr/123456",
+      "description": "<b>하츠네 미쿠</b> 콜라보 카페 예약 오픈 안내.",
+      "cafename": "보컬로이드 한국 카페",
+      "cafeurl": "https://cafe.naver.com/vocaloidkr"
+    }
+  ]
+}
