@@ -30,13 +30,14 @@ function headline(reason: NotifyReason, status: EventStatus, slot: string): { la
 }
 
 /**
- * 국내·해외 구분 이미지 (임베드 오른쪽 위 썸네일). 값이 없으면 썸네일을 넣지 않는다.
- * 이미지 파일은 레포 assets/에 두고 GitHub raw 주소로 쓴다.
+ * 국내·일본·해외 구분 이미지. 2:1 가로형이라 썸네일(최대 80px)로는 글자가 안 보여 임베드 하단 이미지로 넣는다.
+ * 파일은 레포 assets/에 두고 공개 레포의 GitHub raw 주소로 쓴다.
  */
-export const REGION_THUMBNAILS: Record<string, string | undefined> = {
-  KR: undefined,
-  JP: undefined,
-  OTHER: undefined,
+const ASSET_BASE = 'https://raw.githubusercontent.com/catdevdog/miku-event-tracker/main/assets';
+export const REGION_IMAGES: Record<string, string | undefined> = {
+  KR: `${ASSET_BASE}/region-kr.png`,
+  JP: `${ASSET_BASE}/region-jp.png`,
+  OTHER: `${ASSET_BASE}/region-overseas.png`,
 };
 
 const REGION_FLAG: Record<string, string> = { KR: '🇰🇷 국내', JP: '🇯🇵 일본', OTHER: '🌏 해외' };
@@ -73,7 +74,7 @@ export function renderEventMessage(e: EventRow, reason: NotifyReason, slot = '',
   if (e.ticketUrl) fields.push({ name: '예매', value: `[예매 페이지 열기](${e.ticketUrl})`.slice(0, 1024), inline: true });
   if (links.length) fields.push({ name: '출처', value: links.map(sourceLink).join('\n').slice(0, 1024), inline: true });
 
-  const thumbnail = REGION_THUMBNAILS[e.region];
+  const image = REGION_IMAGES[e.region];
   return {
     embeds: [
       {
@@ -83,7 +84,7 @@ export function renderEventMessage(e: EventRow, reason: NotifyReason, slot = '',
         description,
         color,
         fields,
-        ...(thumbnail ? { thumbnail: { url: thumbnail } } : {}),
+        ...(image ? { image: { url: image } } : {}),
         footer: { text: `상태: ${STATUS_KO[e.status] ?? e.status} · 미쿠 행사 알림` },
       },
     ],

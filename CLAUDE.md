@@ -60,6 +60,7 @@ src/
   services/             공용 조회 로직: status(상태), sources(/소스), rawItems(/최근수집), events(/행사). 추후 멘션 질의·공개 웹도 여기를 쓴다
   admin/                Express 라우트(/api/admin/*): 소스 상태, 키워드, 행사 검수, misses 기록
 web/                    관리 화면
+assets/                 공지 임베드 하단 지역 이미지(region-kr/jp/overseas.png, 800×400 투명 PNG). GitHub raw 주소로 참조
 drizzle/                마이그레이션 (npm run db:generate로 생성)
 scripts/schema-diff.ts  docs/schema.sql과 마이그레이션 구조 비교 (npm run db:diff, test/schema.test.ts)
 docs/schema.sql         DDL 정본 (SQLite 3.53에서 검증 완료)

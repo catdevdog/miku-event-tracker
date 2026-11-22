@@ -172,7 +172,7 @@ describe('알림 (규칙 7)', () => {
   it('임베드: 머리말, 한국 시각 + 상대 시각, 구분, 예매·출처 링크', async () => {
     const m = await mergeExtraction(t.db, ext({ ticket_open_at: '2026-12-01T11:00:00.000Z', ticket_url: 'https://ticket.melon.com/x' }), ctx((await rawItem()).id));
     const msg = renderEventMessage(m.event, 'reminder', 'T-1h', ['https://x.com/cfm_miku/status/1']);
-    const embed = msg.embeds![0] as { author: { name: string }; title: string; url: string; description: string; fields: { name: string; value: string }[]; thumbnail?: unknown };
+    const embed = msg.embeds![0] as { author: { name: string }; title: string; url: string; description: string; fields: { name: string; value: string }[]; image?: { url: string } };
     expect(embed.author.name).toBe('⏰ 티켓 오픈 1시간 전');
     expect(embed.title).toBe('HATSUNE MIKU EXPO 2027 KOREA');
     expect(embed.url).toBe('https://ticket.melon.com/x');
@@ -184,7 +184,11 @@ describe('알림 (규칙 7)', () => {
       { name: '예매', value: '[예매 페이지 열기](https://ticket.melon.com/x)', inline: true },
       { name: '출처', value: '[x.com](https://x.com/cfm_miku/status/1)', inline: true },
     ]);
-    expect(embed.thumbnail).toBeUndefined();
+    expect(embed.image?.url).toBe('https://raw.githubusercontent.com/catdevdog/miku-event-tracker/main/assets/region-kr.png');
+    const jp = renderEventMessage({ ...m.event, region: 'JP' }, 'new').embeds![0] as { image?: { url: string } };
+    expect(jp.image?.url).toMatch(/\/assets\/region-jp\.png$/);
+    const other = renderEventMessage({ ...m.event, region: 'OTHER' }, 'new').embeds![0] as { image?: { url: string } };
+    expect(other.image?.url).toMatch(/\/assets\/region-overseas\.png$/);
   });
 
   it('발송: 공지 채널은 notifier로, 실패하면 3회까지 다시 시도', async () => {
