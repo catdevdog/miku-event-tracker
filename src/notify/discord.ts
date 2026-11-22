@@ -550,11 +550,20 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
       const missing: string[] = [];
       if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) missing.push('역할 관리');
       if (channelId) {
-        const ch = await client.channels.fetch(channelId);
+        const ch = await client.channels.fetch(channelId).catch(() => null);
         const perms = ch && 'permissionsFor' in ch ? ch.permissionsFor(me) : null;
-        if (perms) {
-          if (!perms.has(PermissionFlagsBits.CreatePublicThreads)) missing.push('공개 스레드 만들기');
-          if (!perms.has(PermissionFlagsBits.SendMessagesInThreads)) missing.push('스레드에서 메시지 보내기');
+        if (!perms) missing.push('채널 보기');
+        else {
+          // 채널 권한: 공지·답장(메시지 기록 보기 필요)·스레드·고정
+          const need: [bigint, string][] = [
+            [PermissionFlagsBits.ViewChannel, '채널 보기'],
+            [PermissionFlagsBits.SendMessages, '메시지 보내기'],
+            [PermissionFlagsBits.EmbedLinks, '링크 첨부'],
+            [PermissionFlagsBits.ReadMessageHistory, '메시지 기록 보기'],
+            [PermissionFlagsBits.CreatePublicThreads, '공개 스레드 만들기'],
+            [PermissionFlagsBits.SendMessagesInThreads, '스레드에서 메시지 보내기'],
+          ];
+          for (const [flag, name] of need) if (!perms.has(flag)) missing.push(name);
           if (!perms.has(PermissionFlagsBits.PinMessages) && !perms.has(PermissionFlagsBits.ManageMessages)) missing.push('메시지 고정');
         }
       }

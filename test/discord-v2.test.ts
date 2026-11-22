@@ -174,6 +174,17 @@ describe('설정 점검 (/관리 설정)', () => {
     expect(bot.listMembers).not.toHaveBeenCalled();
   });
 
+  it('공지 채널에 패널을 못 올려도(50013) 멈추지 않고 멤버에게 역할을 준다', async () => {
+    const { jobs, bot } = jobsWith({
+      post: vi.fn(async () => Promise.reject(Object.assign(new Error('Missing Permissions'), { code: 50013 }))),
+      listMembers: vi.fn(async () => [{ id: 'a', bot: false, roles: [] }]),
+    });
+    const r = await jobs.setup();
+    expect(r!.errors.join('\n')).toContain('구독 패널을 공지 채널에 올리지 못했습니다: Missing Permissions (50013)');
+    expect(r!.errors.join('\n')).toContain('메시지 보내기');
+    expect(bot.addMemberRole).toHaveBeenCalledWith('a', expect.any(String));
+  });
+
   it('정상이면 멤버에게 국내 역할을 준다 (동시에 불러도 한 번만 실행)', async () => {
     const { jobs, bot } = jobsWith({ listMembers: vi.fn(async () => [{ id: 'a', bot: false, roles: [] }]) });
     const [r1, r2] = await Promise.all([jobs.setup(), jobs.setup()]);

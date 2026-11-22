@@ -123,7 +123,21 @@ const pipeline = createPipelineRunner({
   notifyPaused: () => isNotifyPaused(db, config.NOTIFY_PAUSED),
   // 공지 채널: 새 행사는 지역 역할 멘션 + 스레드, 상태 변경은 원래 카드 수정 + 스레드
   deliverNotice: (job) =>
-    deliverNotice({ db, notifier, noticeChannelId: config.DISCORD_NOTICE_CHANNEL_ID, bot: bot?.isReady() ? bot : undefined, log: console }, job),
+    deliverNotice(
+      {
+        db,
+        notifier,
+        noticeChannelId: config.DISCORD_NOTICE_CHANNEL_ID,
+        bot: bot?.isReady() ? bot : undefined,
+        log: console,
+        onBotFailure: (err) =>
+          alerter.alert(
+            `봇이 공지 채널에 글을 쓰지 못해 웹후크로 보냈습니다: ${err instanceof Error ? err.message : String(err)}. ` +
+              '공지 채널 설정 → 권한 → 봇 역할에 채널 보기·메시지 보내기·링크 첨부·메시지 기록 보기를 허용해 주세요.',
+          ),
+      },
+      job,
+    ),
 });
 if (config.NOTIFY_PAUSED) console.warn('NOTIFY_PAUSED: 알림을 큐에만 쌓고 보내지 않습니다.');
 pipeline.start();

@@ -111,13 +111,29 @@ export async function ensureSubscriptionSetup(
       // 지워졌거나 채널이 바뀌었으면 새로 올린다
     }
   }
-  const id = await bot.post(noticeChannelId, panelMessage());
+  // 패널을 못 올려도(채널 권한) 역할·기본 구독은 계속 진행한다
+  let id: string;
+  try {
+    id = await bot.post(noticeChannelId, panelMessage());
+  } catch (err) {
+    result.errors.push(`구독 패널을 공지 채널에 올리지 못했습니다: ${errMsg(err)}. ${channelPermissionHint(err)}`);
+    return result;
+  }
   await setSetting(db, SETTING.panelMessage, id, now);
   result.panelPosted = true;
   await bot.pinMessage(noticeChannelId, id).catch((err: unknown) => {
     result.errors.push(`구독 패널 고정 실패(메시지 고정 권한 필요): ${err instanceof Error ? err.message : String(err)}`);
   });
   return result;
+}
+
+/** 채널 권한 오류 안내 (50013 권한 없음, 50001 채널을 볼 수 없음) */
+export function channelPermissionHint(err: unknown): string {
+  const code = discordErrorCode(err);
+  if (code === 50013 || code === 50001) {
+    return '공지 채널 설정 → 권한에서 봇 역할에 채널 보기·메시지 보내기·링크 첨부·메시지 기록 보기를 허용해 주세요';
+  }
+  return '잠시 뒤에 다시 시도해요';
 }
 
 /** 멤버 목록을 읽지 못함 (대부분 Developer Portal의 Server Members Intent가 꺼져 있음) */

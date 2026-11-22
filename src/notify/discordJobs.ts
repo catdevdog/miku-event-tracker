@@ -87,7 +87,13 @@ export function createDiscordJobs(deps: DiscordJobsDeps) {
       if (memberError) await dailyAlert('members', memberError);
     }
     const missing = await bot.missingPermissions(deps.noticeChannelId).catch(() => [] as string[]);
-    if (missing.length) await dailyAlert('perm', `봇 역할에 권한이 부족합니다: ${missing.join(', ')}. 서버 설정 → 역할 → 봇 역할에서 켜 주세요.`);
+    if (deps.adminChannelId) {
+      const admin = await bot.missingPermissions(deps.adminChannelId).catch(() => [] as string[]);
+      for (const p of admin) if (['채널 보기', '메시지 보내기', '링크 첨부'].includes(p)) missing.push(`관리자 채널 ${p}`);
+    }
+    if (missing.length) {
+      await dailyAlert('perm', `봇에게 권한이 부족합니다: ${missing.join(', ')}. 역할 관리는 서버 설정 → 역할 → 봇 역할에서, 나머지는 공지 채널 설정 → 권한 → 봇 역할에서 허용해 주세요.`);
+    }
     return { ...r, members, memberError, missing };
   }
 

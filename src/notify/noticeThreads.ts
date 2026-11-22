@@ -24,6 +24,8 @@ export interface NoticeDeliveryDeps {
   noticeChannelId?: string;
   bot?: Pick<DiscordBot, 'isReady' | 'post' | 'editMessage' | 'startThread'>;
   log?: Pick<Console, 'warn'>;
+  /** 봇이 공지 채널에 못 써서 웹후크로 돌렸을 때 (관리자 경보용) */
+  onBotFailure?: (err: unknown) => void | Promise<void>;
 }
 
 export interface NoticeJob {
@@ -90,6 +92,7 @@ export async function deliverNotice(deps: NoticeDeliveryDeps, job: NoticeJob): P
       messageId = await bot.post(channelId, job.message, { mentionRoleId: roleId });
     } catch (err) {
       deps.log?.warn(`[공지] 봇 발송 실패, 웹후크로 전환: ${err instanceof Error ? err.message : String(err)}`);
+      await Promise.resolve(deps.onBotFailure?.(err)).catch(() => undefined);
       await deps.notifier.sendNotice(job.message);
       return 'webhook';
     }
