@@ -21,6 +21,7 @@ import {
   type ModalSubmitInteraction,
   type StringSelectMenuInteraction,
 } from 'discord.js';
+import { Agent } from 'undici';
 import type { ChannelSender, OutgoingMessage } from './types.js';
 import { commandDefinitions } from './commands.js';
 import { truncate } from './format.js';
@@ -147,9 +148,18 @@ export const discordErrorCode = (err: unknown): number | undefined => {
   return typeof code === 'number' ? code : undefined;
 };
 
+/**
+ * 디스코드 REST 요청에 쓰는 전용 연결(Agent).
+ * undici는 버전이 달라도 전역 dispatcher 하나를 같이 쓰는데, 먼저 불러온 쪽(cheerio 안의 undici 7)이 그 자리를 차지한다.
+ * 그러면 discord.js(undici 6)의 요청이 undici 7 연결을 타게 되고, 파일 첨부(FormData)는 undici 7이 자기 FormData가 아니라며
+ * 본문을 만들지 못해 "action is not a function"으로 실패한다(JSON 요청은 문제없어 파일을 올릴 때만 드러난다).
+ * discord.js와 같은 undici로 만든 Agent를 직접 넘겨 전역 dispatcher를 쓰지 않게 한다.
+ */
+export const discordRestOptions = () => ({ agent: new Agent() });
+
 /** 길드 슬래시 명령을 등록한다. 길드 명령은 등록 즉시 반영된다. */
 export async function registerCommands(token: string, appId: string, guildId: string): Promise<void> {
-  const rest = new REST({ version: '10' }).setToken(token);
+  const rest = new REST({ version: '10', ...discordRestOptions() }).setToken(token);
   await rest.put(Routes.applicationGuildCommands(appId, guildId), { body: commandDefinitions });
 }
 
@@ -201,7 +211,7 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
   // 채널 발송·슬래시 명령은 Guilds, 멘션 질문은 GuildMessages.
   // 봇을 멘션한 메시지는 MessageContent(특권 인텐트) 없이도 본문이 온다.
   // 멤버 목록은 게이트웨이가 아니라 REST(List Guild Members)로 읽으므로 GuildMembers 인텐트를 접속에 넣지 않는다.
-  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
+  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages], rest: discordRestOptions() });
   let state: BotState = 'connecting';
   const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
