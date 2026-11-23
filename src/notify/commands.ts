@@ -40,6 +40,7 @@ export const commandDefinitions = [
     .toJSON(),
   new SlashCommandBuilder().setName('점검').setDescription('지역별 행사 수와 국내 수집처 단계별 건수').toJSON(),
   new SlashCommandBuilder().setName('가이드').setDescription('봇 이용법, 수집 주기, 알림 시점 안내').toJSON(),
+  new SlashCommandBuilder().setName('내알림').setDescription('내가 켠 알림과 참석 표시한 행사 보기').toJSON(),
   new SlashCommandBuilder()
     .setName('제보')
     .setDescription('봇이 놓친 미쿠 행사를 알려 주세요')
@@ -114,6 +115,8 @@ export const commandDefinitions = [
           o.setName('동작').setDescription('할 일').setRequired(true).addChoices({ name: '일시정지', value: 'pause' }, { name: '재개', value: 'resume' }, { name: '상태', value: 'status' }),
         ),
     )
+    .addSubcommand((s) => s.setName('중복검사').setDescription('이미 등록된 행사 중 같은 행사가 있는지 Claude로 검사 (의심되는 쌍은 관리자 채널 카드로)'))
+    .addSubcommand((s) => s.setName('달력').setDescription('이번 달 행사 달력 그림을 공지 채널에 지금 올리기'))
     .addSubcommand((s) => s.setName('설정').setDescription('알림 역할·구독 패널·상태판을 지금 다시 맞추고 권한을 점검'))
     .toJSON(),
 ];

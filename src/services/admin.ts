@@ -1,8 +1,8 @@
 import { and, asc, desc, eq, isNull, like, ne, or, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { EVENT_KINDS, KEYWORD_TIERS, eventSources, eventStateLog, eventWatchers, events, keywords, notifications, sources } from '../db/schema.js';
+import { EVENT_KINDS, KEYWORD_TIERS, eventAttendees, eventSources, eventStateLog, eventWatchers, events, keywords, notifications, sources } from '../db/schema.js';
 import { detectLang } from '../db/seed.js';
-import { normalizeKey, parseAliases, type EventRow } from '../pipeline/merge.js';
+import { normalizeKey, notableChanges, parseAliases, type EventRow, type NotableChange } from '../pipeline/merge.js';
 import { deriveStatus, type EventStatus } from '../pipeline/state.js';
 
 /**
@@ -196,6 +196,8 @@ export interface EditResult {
   event: EventRow;
   changed: string[];
   statusChanged: boolean;
+  /** 알릴 만한 일정·장소 변경 */
+  notable: NotableChange[];
 }
 
 /**
@@ -215,7 +217,7 @@ export async function editEvent(db: Db, id: number, fields: Partial<EventRow>, b
     e.status === 'cancelled'
       ? 'cancelled'
       : deriveStatus({ startDate: next.startDate, endDate: next.endDate, ticketOpenAt: next.ticketOpenAt, saleStarted: e.status === 'on_sale' && !next.ticketOpenAt }, now);
-  if (Object.keys(changes).length === 0 && status === e.status) return { event: e, changed: [], statusChanged: false };
+  if (Object.keys(changes).length === 0 && status === e.status) return { event: e, changed: [], statusChanged: false, notable: [] };
   const nowIso = now.toISOString();
   const [updated] = await db
     .update(events)
@@ -229,7 +231,7 @@ export async function editEvent(db: Db, id: number, fields: Partial<EventRow>, b
     changedFields: JSON.stringify({ ...changes, by: `admin:${by}` }),
     createdAt: nowIso,
   });
-  return { event: updated!, changed: Object.keys(changes), statusChanged: status !== e.status };
+  return { event: updated!, changed: Object.keys(changes), statusChanged: status !== e.status, notable: notableChanges(e, updated!) };
 }
 
 /** 숨기기(needs_review=2)·다시 보이기(0). 숨긴 국내 행사는 서버 이벤트에서도 지워진다 */
@@ -262,6 +264,8 @@ export async function mergeEvents(db: Db, keepId: number, absorbId: number, by: 
   await db.delete(eventSources).where(eq(eventSources.eventId, absorbId));
   await db.run(sql`INSERT OR IGNORE INTO event_watchers (event_id, user_id, created_at) SELECT ${keepId}, user_id, created_at FROM event_watchers WHERE event_id = ${absorbId}`);
   await db.delete(eventWatchers).where(eq(eventWatchers.eventId, absorbId));
+  await db.run(sql`INSERT OR IGNORE INTO event_attendees (event_id, user_id, created_at) SELECT ${keepId}, user_id, created_at FROM event_attendees WHERE event_id = ${absorbId}`);
+  await db.delete(eventAttendees).where(eq(eventAttendees.eventId, absorbId));
   await db.update(events).set({ parentEventId: keepId }).where(eq(events.parentEventId, absorbId));
 
   const fill: Partial<EventRow> = {};

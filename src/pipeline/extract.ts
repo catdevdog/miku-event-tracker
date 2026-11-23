@@ -45,6 +45,20 @@ export const EXTRACT_TOOL: Anthropic.Tool = {
         description:
           '실제로 예매·사전예약·구매를 하는 페이지의 URL (예매처, 공식 예약 페이지, 공식 판매 페이지). 원문에 그런 링크가 없으면 null. 소개 글·기사·블로그·SNS 주소나 이 원문 자체의 주소는 넣지 않는다',
       },
+      presales: {
+        type: 'array',
+        description: '일반 예매 전에 있는 선예매·추첨 접수 일정 (팬클럽 선예매, 추첨 접수, 2차 선예매 등). 없으면 빈 배열',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            label: { type: 'string', description: '이름 (예: 팬클럽 선예매, 1차 추첨 접수)' },
+            open_at: { ...nullableString, description: '시작 일시. 시간대 포함 ISO 8601. 모르면 null' },
+            close_at: { ...nullableString, description: '마감 일시. 시간대 포함 ISO 8601. 모르면 null' },
+          },
+          required: ['label', 'open_at', 'close_at'],
+        },
+      },
       is_cancelled: { type: 'boolean', description: '행사가 취소·중지됐다는 공지면 true' },
       sale_started: { type: ['boolean', 'null'], description: '원문에 판매 중·판매 시작이 명시돼 있으면 true, 판매 전이면 false, 알 수 없으면 null' },
       parent_event_hint: { ...nullableString, description: '이 행사가 포함된 상위 행사명 (예: AGF 2026 안의 부스면 "AGF 2026")' },
@@ -53,12 +67,19 @@ export const EXTRACT_TOOL: Anthropic.Tool = {
     },
     required: [
       'is_relevant', 'title', 'kind', 'officiality', 'region', 'city', 'venue', 'start_date', 'end_date',
-      'ticket_open_at', 'ticket_url', 'is_cancelled', 'sale_started', 'parent_event_hint', 'summary_ko', 'confidence',
+      'ticket_open_at', 'ticket_url', 'presales', 'is_cancelled', 'sale_started', 'parent_event_hint', 'summary_ko', 'confidence',
     ],
   },
 };
 
 const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const isoOrNull = z
+  .string()
+  .nullable()
+  .transform((v) => (v && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : null));
+const presaleSchema = z.object({ label: z.string().min(1).max(60), open_at: isoOrNull, close_at: isoOrNull });
+/** 선예매·추첨 접수 일정 */
+export type Presale = z.infer<typeof presaleSchema>;
 export const extractionSchema = z.object({
   is_relevant: z.boolean(),
   title: z.string().min(1),
@@ -74,6 +95,12 @@ export const extractionSchema = z.object({
     .nullable()
     .transform((v) => (v && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : null)),
   ticket_url: z.string().url().nullable().catch(null),
+  // 일정이 하나도 없는 항목은 버린다. 형식이 틀리면 빈 배열
+  presales: z
+    .array(presaleSchema)
+    .transform((a) => a.filter((p) => p.open_at || p.close_at).slice(0, 5))
+    .optional()
+    .catch([]),
   is_cancelled: z.boolean(),
   sale_started: z.boolean().nullable(),
   parent_event_hint: z.string().nullable(),
@@ -152,6 +179,7 @@ const matchSchema = z.object({
 export const MATCH_SYSTEM = [
   '너는 하츠네 미쿠 행사 목록에서 중복을 찾는 도우미다. [새 행사]가 [기존 행사 후보] 중 하나와 같은 행사인지 판단해 judge_same_event 도구로 답한다.',
   '- same: 같은 행사다. 언어·표기·약칭만 다르고 같은 회차·같은 장소·같은 기간(또는 같은 상품·같은 콜라보)을 가리킨다.',
+  '  같은 회차의 일정이 연기·변경된 경우도 same이다 (새 행사 요약에 연기·일정 변경이 언급되거나, 제목·장소가 같고 날짜만 조금 다른 경우).',
   '- part_of: 한쪽이 다른 쪽의 일부다 (큰 행사 안의 부스·무대, 투어 전체 발표와 그중 한 도시 공연).',
   '- different: 다른 행사다. 같은 투어의 다른 도시 공연, 같은 이름의 다른 연도·시즌, 같은 장소의 다른 행사, 같은 기간의 다른 상품은 different.',
   '확실하지 않으면 confidence를 낮게 준다. 같은 후보가 없으면 match_id는 null, relation은 different.',
@@ -210,6 +238,7 @@ export function systemPrompt(now: Date): string {
     '- 날짜·시각은 원문에 있는 것만 쓴다. 추측하지 않는다. ticket_open_at은 일반 예매 오픈 시각이며 선예매·추첨 접수 시작과 구분한다.',
     '- title은 행사 공식 명칭을 원문 표기 그대로 쓴다. 같은 행사를 여러 원문에서 받으므로 명칭을 일관되게 쓴다.',
     '- ticket_url은 실제로 예매·사전예약·구매를 하는 페이지만 쓴다. 소개 글·기사·블로그·SNS 주소, 이 원문 자체의 주소는 쓰지 않는다. 없으면 null.',
+    '- presales에는 일반 예매 전에 있는 선예매·추첨 접수를 넣는다 (팬클럽 선예매, 추첨 접수 기간 등). 일반 예매는 넣지 않는다.',
     '- 굿즈·콜라보처럼 좌석 예매가 없는 것은 ticket_open_at을 null로 두고, 발매·판매 시작일은 start_date에 쓴다.',
     '- confidence: 행사 여부와 핵심 필드(일정·장소)에 확신이 낮으면 0.7 미만으로 준다.',
     '',

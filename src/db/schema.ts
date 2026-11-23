@@ -147,6 +147,8 @@ export const events = sqliteTable(
     aliases: text('aliases').notNull().default('[]'),
     // 같은 행사로 의심되는 기존 행사. 값이 있으면 검수 카드에 [합치기]·[별개 행사]가 뜬다
     dupOfId: integer('dup_of_id').references((): AnySQLiteColumn => events.id),
+    // 선예매·추첨 접수 일정 (JSON 배열: {label, open_at, close_at})
+    presales: text('presales').notNull().default('[]'),
     createdAt: text('created_at').notNull().default(now),
     updatedAt: text('updated_at').notNull().default(now),
   },
@@ -233,6 +235,8 @@ export const eventDiscord = sqliteTable('event_discord', {
   guildEventHash: text('guild_event_hash'),
   noticeMessageId: text('notice_message_id'),
   noticeThreadId: text('notice_thread_id'),
+  // 이미 공지한 행사끼리 중복이 의심될 때 관리자 채널에 올린 카드
+  dupMessageId: text('dup_message_id'),
   updatedAt: text('updated_at')
     .notNull()
     .default(sql`(datetime('now'))`),
@@ -325,6 +329,34 @@ export const eventWatchers = sqliteTable(
     createdAt: text('created_at').notNull().default(now),
   },
   (t) => [primaryKey({ columns: [t.eventId, t.userId] })],
+);
+
+// 참석 표시(🙋 갈 거예요)를 누른 사용자
+export const eventAttendees = sqliteTable(
+  'event_attendees',
+  {
+    eventId: integer('event_id')
+      .notNull()
+      .references(() => events.id),
+    userId: text('user_id').notNull(),
+    createdAt: text('created_at').notNull().default(now),
+  },
+  (t) => [primaryKey({ columns: [t.eventId, t.userId] })],
+);
+
+// 관리자가 "별개 행사"라고 정한 쌍 (a_id < b_id). 중복 검사에서 다시 묻지 않는다
+export const eventDistinct = sqliteTable(
+  'event_distinct',
+  {
+    aId: integer('a_id')
+      .notNull()
+      .references(() => events.id),
+    bId: integer('b_id')
+      .notNull()
+      .references(() => events.id),
+    createdAt: text('created_at').notNull().default(now),
+  },
+  (t) => [primaryKey({ columns: [t.aId, t.bId] })],
 );
 
 // 사용자 제보 (디스코드 메시지 우클릭·/제보). 원문은 raw_items(사용자 제보 소스)로 파이프라인에 들어간다.

@@ -22,7 +22,7 @@ const ev = (over: Partial<EventRow> = {}): EventRow => ({
   summaryKo: '서울에서 미쿠 엑스포가 열린다.',
   dedupKey: 'k',
   needsReview: 0,
-  mergedInto: null, aliases: '[]', dupOfId: null,
+  mergedInto: null, aliases: '[]', dupOfId: null, presales: '[]',
   createdAt: '',
   updatedAt: '',
   ...over,
@@ -71,14 +71,14 @@ describe('공지 카드', () => {
     expect(text).toContain('> 서울에서 미쿠 엑스포가 열린다.');
     expect(text).toContain('🎫 **티켓 오픈**　2026.12.01(화) 20:00 KST · <t:1796122800:R>');
     expect(nodes.find((n) => n.type === 12)!.items![0]!.media.url).toMatch(/region-kr\.png$/);
-    expect(nodes.filter((n) => n.type === 2).map((b) => b.label)).toEqual(['🎫 예매하기', '📰 원문 보기', '📅 티켓 오픈 캘린더에 추가', '🔔 알림 받기']);
+    expect(nodes.filter((n) => n.type === 2).map((b) => b.label)).toEqual(['🎫 예매하기', '📰 원문 보기', '📅 티켓 오픈 캘린더에 추가', '🔔 알림 받기', '🙋 갈 거예요']);
     expect(nodes.find((n) => n.label === '🔔 알림 받기')?.custom_id).toBe('wt:1');
   });
 
   it('링크가 없으면 알림 받기 버튼만, 마크다운 기호는 이스케이프', () => {
     const card = noticeCard(ev({ ticketUrl: null, ticketOpenAt: null, startDate: null, endDate: null, title: '*미쿠* [팝업]', status: 'announced' }), headline('new', 'announced', ''), []);
     const nodes = flat(card);
-    expect(nodes.filter((n) => n.type === 2).map((b) => b.label)).toEqual(['🔔 알림 받기']);
+    expect(nodes.filter((n) => n.type === 2).map((b) => b.label)).toEqual(['🔔 알림 받기', '🙋 갈 거예요']);
     expect(flat(noticeCard(ev({ ticketUrl: null, ticketOpenAt: null, startDate: null, status: 'ended' }), headline('new', 'ended', ''), [])).some((n) => n.type === 1)).toBe(false);
     expect(nodes.map((n) => n.content ?? '').join('\n')).toContain('## \\*미쿠\\* ［팝업］');
   });

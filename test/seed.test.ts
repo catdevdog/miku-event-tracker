@@ -49,7 +49,7 @@ describe('seed', () => {
   it('enabled=false 소스는 0으로 들어간다', async () => {
     await seedDatabase(t.db);
     const disabled = await t.db.select({ name: sources.name }).from(sources).where(eq(sources.enabled, 0));
-    expect(disabled).toHaveLength(4);
+    expect(disabled).toHaveLength(3);
   });
 
   it('키워드 언어를 표기 문자로 추정한다', () => {

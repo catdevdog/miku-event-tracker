@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { eventSources, eventWatchers, notifications, rawItems, sources, subscribers } from '../db/schema.js';
-import type { EventRow } from '../pipeline/merge.js';
+import { eventAttendees, eventSources, eventWatchers, notifications, rawItems, sources, subscribers } from '../db/schema.js';
+import type { EventRow, NotableChange } from '../pipeline/merge.js';
 import type { EventStatus } from '../pipeline/state.js';
 import type { OutgoingMessage } from './types.js';
 import { discordTime, formatKstShort, formatPeriodKo } from './format.js';
@@ -36,10 +36,19 @@ function sourceLink(url: string): string {
 }
 
 /** 디스코드 임베드 메시지. 시각은 한국 시각과 디스코드 타임스탬프(보는 사람 기준·상대 시간)를 함께 쓴다. */
-export function renderEventMessage(e: EventRow, reason: NotifyReason, slot = '', sourceUrls: string[] = []): OutgoingMessage {
-  const { label, icon, color } = headline(reason, e.status, slot);
+export interface RenderExtra {
+  /** 머리말을 바꾼다 (일정 변경, 선예매 리마인더, 전날 알림 등) */
+  head?: { label: string; icon: string; color: number };
+  /** 일정 줄 위에 넣는 한두 줄 (무엇이 바뀌었는지) */
+  note?: string;
+  /** 참석 표시 수 */
+  going?: number;
+}
+
+export function renderEventMessage(e: EventRow, reason: NotifyReason, slot = '', sourceUrls: string[] = [], extra: RenderExtra = {}): OutgoingMessage {
+  const { label, icon, color } = extra.head ?? headline(reason, e.status, slot);
   const links = [...new Set(sourceUrls)].slice(0, 3);
-  const lines = [...detailLines(e), `🏷️ **구분**　${REGION_FLAG[e.region] ?? e.region} · ${kindLabel(e.kind)} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}`];
+  const lines = [...(extra.note ? [extra.note, ''] : []), ...detailLines(e), `🏷️ **구분**　${REGION_FLAG[e.region] ?? e.region} · ${kindLabel(e.kind)} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}`];
   const summary = (e.summaryKo ?? '').trim();
   const description = [summary, summary ? '' : null, ...lines].filter((l) => l !== null).join('\n').slice(0, 4000);
 
@@ -49,7 +58,7 @@ export function renderEventMessage(e: EventRow, reason: NotifyReason, slot = '',
 
   const image = REGION_IMAGES[e.region];
   return {
-    card: noticeCard(e, { label, icon, color }, links),
+    card: noticeCard(e, { label, icon, color }, links, { note: extra.note, going: extra.going }),
     embeds: [
       {
         author: { name: `${icon} ${label}` },
@@ -110,17 +119,30 @@ function matchesFilters(filtersJson: string, e: EventRow): boolean {
  * 검수 대기(needs_review=1)·검수에서 무시(2)한 행사는 알리지 않는다.
  * @returns 새로 큐에 넣은 수
  */
-export async function planNotifications(db: Db, e: EventRow, reason: NotifyReason, slot = ''): Promise<number> {
+export interface PlanOptions extends RenderExtra {
+  /** 🔔를 켠 사람에게만 (DM). 공지 채널에는 보내지 않는다 */
+  watchersOnly?: boolean;
+}
+
+/** 참석 표시(🙋) 수 */
+export async function goingCount(db: Db, eventId: number): Promise<number> {
+  const [r] = await db.select({ n: sql<number>`count(*)` }).from(eventAttendees).where(eq(eventAttendees.eventId, eventId));
+  return Number(r?.n ?? 0);
+}
+
+export async function planNotifications(db: Db, e: EventRow, reason: NotifyReason, slot = '', opts: PlanOptions = {}): Promise<number> {
   if (e.needsReview !== 0) return 0; // 1 검수 대기, 2 검수에서 무시
   // 개인 리마인더(🔔) 구독자는 지켜보는 행사의 리마인더·상태 변경만 받는다
   const watchers = new Set(
     reason === 'new' ? [] : (await db.select({ userId: eventWatchers.userId }).from(eventWatchers).where(eq(eventWatchers.eventId, e.id))).map((w) => w.userId),
   );
   const subs = (await db.select().from(subscribers).where(eq(subscribers.active, 1))).filter((s) =>
-    isWatchFilter(s.filters) ? s.channel === 'discord_dm' && watchers.has(s.target) : matchesFilters(s.filters, e),
+    isWatchFilter(s.filters) ? s.channel === 'discord_dm' && watchers.has(s.target) : !opts.watchersOnly && matchesFilters(s.filters, e),
   );
   if (subs.length === 0) return 0;
-  const message = JSON.stringify(renderEventMessage(e, reason, slot, await eventSourceUrls(db, e.id)));
+  const message = JSON.stringify(
+    renderEventMessage(e, reason, slot, await eventSourceUrls(db, e.id), { head: opts.head, note: opts.note, going: await goingCount(db, e.id) }),
+  );
   let queued = 0;
   for (const s of subs) {
     const rows = await db
@@ -137,11 +159,45 @@ export async function planNotifications(db: Db, e: EventRow, reason: NotifyReaso
  * 규칙 7: 새 행사(종료된 것 제외)는 new, 상태가 ticket_scheduled·on_sale·cancelled로 바뀌면 status_change.
  * 검수 대기가 풀린 행사(확신 높은 출처로 확인되거나 디스코드에서 승인)는 그때 처음 알리므로 new로 본다.
  */
-export async function planForChange(db: Db, e: EventRow, change: { created: boolean; statusChanged: boolean; reviewCleared?: boolean }): Promise<number> {
+export async function planForChange(
+  db: Db,
+  e: EventRow,
+  change: { created: boolean; statusChanged: boolean; reviewCleared?: boolean; changes?: NotableChange[] },
+): Promise<number> {
   if (change.created || change.reviewCleared) return e.status === 'ended' ? 0 : planNotifications(db, e, 'new');
-  if (change.statusChanged && ['ticket_scheduled', 'on_sale', 'cancelled'].includes(e.status)) return planNotifications(db, e, 'status_change');
+  const note = change.changes?.length ? changeNote(change.changes) : undefined;
+  if (change.statusChanged && ['ticket_scheduled', 'on_sale', 'cancelled'].includes(e.status)) return planNotifications(db, e, 'status_change', '', { note });
+  // 일정·장소만 바뀐 경우: 원래 카드를 고치고 스레드에 쓴다(멘션 없음), 🔔를 켠 사람에게는 DM. 같은 내용은 한 번만
+  if (note && change.changes && !['ended', 'cancelled'].includes(e.status)) {
+    return planNotifications(db, e, 'status_change', changeSlot(change.changes), { head: changeHead(change.changes), note });
+  }
   return 0;
 }
+
+const CHANGE_FIELD_KO: Record<NotableChange['field'], string> = { dates: '일정', venue: '장소' };
+const periodKo = (p: string | null) => {
+  if (!p) return '미정';
+  const [s, e] = p.split('~');
+  return formatPeriodKo(s ?? null, e ?? null);
+};
+
+/** "✏️ **일정**　~~2026.12.04(금)~~ → **2026.12.05(토)**" (미정에서 정해진 경우는 "확정") */
+export function changeNote(changes: NotableChange[]): string {
+  return changes
+    .map((c) => {
+      const show = (v: string | null) => (c.field === 'dates' ? periodKo(v) : (v ?? '미정'));
+      return c.from ? `✏️ **${CHANGE_FIELD_KO[c.field]} 변경**　~~${show(c.from)}~~ → **${show(c.to)}**` : `✏️ **${CHANGE_FIELD_KO[c.field]} 확정**　**${show(c.to)}**`;
+    })
+    .join('\n');
+}
+
+export function changeHead(changes: NotableChange[]): { label: string; icon: string; color: number } {
+  const fields = [...new Set(changes.map((c) => CHANGE_FIELD_KO[c.field]))].join('·');
+  return { label: `${fields} ${changes.every((c) => !c.from) ? '확정' : '변경'}`, icon: '✏️', color: 0xf5a623 };
+}
+
+/** 같은 변경을 두 번 알리지 않기 위한 슬롯 (바뀐 뒤의 값 기준) */
+export const changeSlot = (changes: NotableChange[]) => `chg:${changes.map((c) => `${c.field}=${c.to ?? ''}`).join('|')}`.slice(0, 200);
 
 export async function queuedNotifications(db: Db, maxAttempts: number) {
   return db

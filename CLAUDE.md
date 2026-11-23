@@ -49,6 +49,7 @@ src/
     links.ts            행동 링크(예매·예약·판매) 검사: 예매처·일반·소개 글 구분, 덮어쓰기 우선순위
     pageText.ts         본문이 짧은 링크 항목·네이버 항목의 원문 페이지 텍스트
     extract.ts          Claude 판정·추출 (tool use, strict 스키마 + zod 검증), 단가
+    dedupSweep.ts       이미 등록된 행사끼리의 중복 검사 (Claude 확인 → dup_of_id)
     merge.ts            dedup_key 생성, 병합(제목 유사도 보조), parent_event_id 연결, 시간 경과 상태 갱신
     state.ts            상태 계산(앞으로만 진행) + event_state_log
     purge.ts            보관 기한(purge_after) 지난 원문 삭제 (파이프라인 틱에서 하루 1회, job lock 'purge_daily')
@@ -72,7 +73,8 @@ src/
     webhook.ts          공지 채널 웹후크 발송
     format.ts           2000자 자르기, KST 표시
     planner.ts          알림 임베드 생성, notifications 큐 적재, subscribers.filters 매칭, 기본 구독자(공지 채널)
-    reminders.ts        ticket_open_at 기준 T-24h, T-1h
+    reminders.ts        티켓 오픈·선예매 T-24h, T-1h, 🔔 켠 사람에게 전날·종료 3일 전 DM
+    calendarImage.ts    월간 행사 달력 그림 (SVG → PNG)
     sender.ts           큐 발송 (공지 채널은 봇 → 웹후크, 실패 시 3회까지 재시도)
   services/             공용 조회 로직: status(상태), sources(/소스·/가이드), rawItems(/최근수집), events(/행사·검색 상세), diagnostics(/점검), qa(멘션 질문 답변), admin(/관리 DB 작업), settings(discord_settings). 추후 공개 웹도 여기를 쓴다
   admin/                Express 라우트(/api/admin/*): 소스 상태, 키워드, 행사 검수, misses 기록
@@ -84,7 +86,7 @@ docs/schema.sql         DDL 정본 (SQLite 3.53에서 검증 완료)
 docs/kopis.md           KOPIS 어댑터 명세 (원문 PDF는 docs/kopis/)
 docs/naver.md           네이버 검색(NAVER API HUB) 어댑터 명세
 docs/ticket-sites.md    예매처 요청 형식 (멜론·YES24 확인, 티켓링크·NOL 보류 사유)
-seed/sources.json       소스 36개 (enabled=false 4개: 계정 미확인 2, NOL 보류, 티켓링크 제외)
+seed/sources.json       소스 36개 (enabled=false 3개: 매지컬플레이 계정 미확인, NOL 보류, 티켓링크 제외)
 seed/keywords.json      키워드 사전 (strong 22, weak 12, context 19, exclude 2)
 test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 수집, 일부는 명세 기반 예시라고 파일에 표시. kopis/, naver/는 명세 기반 예시)
 ```
@@ -97,7 +99,7 @@ test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 
     - weak는 context와 같이 있을 때만 통과
     - exclude만 걸리고 strong이 없으면 버림
     - 통과하지 못한 글은 `llm_status='skipped'`
-3. LLM 출력은 tool use의 input_schema로 강제한다. 필드: `is_relevant, title, kind, officiality, region, city, venue, start_date, end_date, ticket_open_at, ticket_url, is_cancelled, sale_started, parent_event_hint, summary_ko, confidence`. enum 값은 schema.sql의 CHECK와 같게 맞춘다.
+3. LLM 출력은 tool use의 input_schema로 강제한다. 필드: `is_relevant, title, kind, officiality, region, city, venue, start_date, end_date, ticket_open_at, ticket_url, presales, is_cancelled, sale_started, parent_event_hint, summary_ko, confidence`. enum 값은 schema.sql의 CHECK와 같게 맞춘다.
     - `is_cancelled`(취소 공지)와 `sale_started`(판매 중 명시)는 상태 계산에 쓰려고 추가한 필드다.
     - 본문이 500자 미만인 html_diff·rss 항목은 원문 페이지를 가져와 넘긴다.
     - 본문이 500자 미만인 html_diff·rss·ticket 항목이 키워드에서 떨어지면 원문 페이지로 한 번 더 판정한다. 행사 이름에 미쿠가 없고 출연진·타임테이블에만 있는 경우(예: 원더리벳 2026)를 잡기 위해서다. 항목 주소가 출처 페이지 자체(본문 비교·JSON 모드)면 다시 가져오지 않는다.
@@ -115,6 +117,9 @@ test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 
         - part_of: 따로 등록하고, 부스·무대(또는 상위 행사 힌트가 있는 것)면 `parent_event_id`로 연결한다.
     - 합치면(`/관리 합치기`, 검수 카드) 흡수한 행사의 제목·별칭을 남긴 행사의 별칭으로 옮기고, 아직 안 보낸 알림을 지우고, 공지 채널의 중복 공지를 지운다(스레드에는 안내 한 줄).
     - 행동 링크(`events.ticket_url`: 예매·사전예약·판매 페이지)는 `pipeline/links.ts`로 검사한다. 블로그·뉴스·SNS·커뮤니티 주소와 원문 자체 주소(예매처·KOPIS 출처 제외)는 넣지 않는다. 예매처 링크는 예매처 링크로만 바뀐다. 시작할 때 기존 데이터도 같은 기준으로 정리한다(`cleanupActionLinks`).
+    - 이미 등록된 행사끼리의 중복은 `pipeline/dedupSweep.ts`가 검사한다(배포 후 한 번 자동, `/관리 중복검사`로 다시, 한 번에 Claude 호출 30건까지). 같다고 하면 나중 행사에 `dup_of_id`만 적고 관리자 채널에 [같은 행사로 합치기]·[별개 행사] 카드(`event_discord.dup_message_id`)를 올린다. 둘 다 공지된 행사라 자동으로 합치지 않는다. 다르다고 한 쌍과 관리자가 별개로 정한 쌍은 `event_distinct`에 적어 다시 묻지 않는다.
+    - 일정이 연기·변경된 행사는 날짜가 달라 제목만으로는 못 찾으므로, 제목 유사도 0.75 이상·시작일 차이 120일 이내면 기간이 안 겹쳐도 Claude 확인 후보에 넣는다.
+    - 기존 기간 안에 들어가는 일정(여러 날 행사의 하루만 적은 출처)으로는 기간을 줄이지 않는다. 같은 장소의 다른 언어 표기로는 장소를 바꾸지 않는다.
     - 유형(`kind`)은 concert·booth·stage·popup·cafe·exhibition·live_viewing(상영 포함)·goods·collab(브랜드·교통 콜라보)·other. 표시는 `labels.ts`(아이콘·버튼 문구·일정 줄 이름)에서 정한다.
         - 버튼: 예매처 링크이거나 공연·상영이면 '예매하기', 굿즈·콜라보는 '판매처 보기', 팝업·카페·전시는 '예약·안내 보기', 그 외 '공식 페이지'.
         - 티켓 줄은 공연·상영·무대이거나 티켓 오픈 시각이 있을 때만. 굿즈는 '발매', 팝업·카페·전시·콜라보는 '기간'. 굿즈·콜라보는 서버 예약 이벤트를 만들지 않는다.
@@ -130,7 +135,13 @@ test/fixtures/          어댑터 테스트용 실제 응답 샘플 (2026-11-22 
     - 공지 카드의 🔔 알림 받기(`event_watchers`): 누른 사람에게 그 행사의 리마인더·상태 변경만 DM으로. DM이 막혀 있으면(50007) 다시 시도하지 않고 그 사람의 DM 구독을 멈춘다(다시 누르면 재개).
     - ongoing, ended: 알림 없음
     - 중복 발송은 notifications의 유일 제약으로 막는다.
-    - 일정·장소 변경 알림은 알림 조건과 함께 나중에 정한다. 지금은 로그만 남긴다.
+    - 일정·장소 변경: 기존 행사의 기간이 바뀌거나(미정 → 확정 포함) 장소가 다른 곳으로 바뀌면 reason=status_change, slot=`chg:<바뀐 값>`으로 알린다(같은 값은 한 번만). 공지 채널에서는 원래 카드를 고치고 스레드에 쓰며(멘션 없음), 🔔를 켠 사람에게는 DM. 표기만 다른 장소(다른 언어, 포함 관계, 글자 겹침 0.3 이상)는 변경으로 보지 않는다. `/관리 행사 수정`도 같은 경로.
+    - 선예매·추첨 접수(`events.presales`, 추출 필드 `presales`): 카드에 줄로 보여 주고, 시작 24시간·1시간 전에 리마인더(slot `pre:<해시>:T-24h|T-1h`)를 보낸다. 이름이 같은 일정은 새 값으로 바꾸고 새 이름은 추가한다(5개까지).
+    - 🔔를 켠 사람에게만 DM(공지 채널에는 안 보냄, 한국 시간 09~22시): 시작 전날(slot `D-1`), 팝업·카페·전시·콜라보가 끝나기 3일 전(slot `END-3`).
+    - 굿즈·콜라보(`QUIET_KINDS`)는 공지 채널에 올리되 역할 멘션을 하지 않는다.
+    - 참석 표시(`event_attendees`, 공지 카드 🙋 갈 거예요): 굿즈·콜라보 제외. 누르면 원래 공지 카드의 숫자를 고친다. `/내알림`에서 🔔·🙋 행사와 지역 구독 상태를 본다.
+    - 매월 1일 09:00 KST에 그달 행사 달력 그림을 공지 채널에 올린다(`notify/calendarImage.ts`: SVG → PNG, `@resvg/resvg-js` + Noto Sans KR 글꼴 파일, job lock 'monthly_calendar', 행사가 없으면 생략, `/관리 달력`으로 바로 올리기).
+    - 매주 월요일 09:00 KST에 지난 7일 제보 리포트(놓친 행사·이미 잡은 행사·관련 없음, 놓친 출처 사이트)를 관리자 채널에 올린다(제보가 없으면 생략).
     - 매주 월요일 09:00 KST에 이번 주에 열리는 행사·이번 주 티켓 오픈·지난 7일 새 행사를 공지 채널에 요약한다(없으면 보내지 않음).
     - 국내 확정 행사(발표·예매 예정·판매 중, 시작 전)는 디스코드 서버 예약 이벤트로도 만든다. 날짜만 있으므로 시작일 10:00~종료일 21:00(KST)로 넣고 설명에 표시용이라고 적는다. 취소되면 지운다. 봇 역할에 '이벤트 만들기' 권한이 필요하다(없으면 하루 한 번 경보).
 8. DB 시각은 UTC ISO 문자열이고, 디스코드 표시는 Asia/Seoul로 한다.
@@ -227,7 +238,7 @@ TZ=UTC
 
 - 인스타그램 대상 계정이 비즈니스·크리에이터 계정인지
 - 팝가 검색·목록 URL (AGF 공식 사이트는 www.agfkorea.com, 데이터 주소는 seed/sources.json에 기록)
-- 프로세카 한국 서버(운영사 뉴버스) 공식 계정, 매지컬플레이 공식 채널
+- 매지컬플레이 공식 채널 (프로세카 한국 서버는 X @kr_pjsekai 확인: 한국 App Store 앱 설명에 적힌 계정. 인스타그램은 미확인)
 - NOL 티켓 검색 주소 (멜론·YES24는 확인 완료, 티켓링크는 자동화 차단으로 쓰지 않음. docs/ticket-sites.md)
 - KOPIS: https 동작 여부, 오류 응답 형식, `afterdate`와 기간 파라미터를 같이 쓸 때의 동작, `relates` 하위 요소 구조
 - 알림 조건 중 유형·공식성 등급(유형별 멘션 구분은 실제 유형 분포를 본 뒤 결정). 지역은 알림 역할 구독으로 정했다(국내 기본, 일본·해외 선택). 공지 채널에는 모든 확정 행사가 올라가고 멘션만 지역 역할로 나뉜다.

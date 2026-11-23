@@ -1,9 +1,10 @@
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import { ButtonBuilder, ButtonStyle, ContainerBuilder, SeparatorSpacingSize } from 'discord.js';
 import type { Db } from '../db/client.js';
 import { eventDiscord, eventSources, events, rawItems, sources } from '../db/schema.js';
 import { followMerged, type EventRow } from '../pipeline/merge.js';
 import { mergeEvents } from '../services/admin.js';
+import { markDistinct } from '../pipeline/dedupSweep.js';
 import { planForChange } from './planner.js';
 import { esc, linkable } from './cards.js';
 import { formatKstShort, formatPeriodKo } from './format.js';
@@ -191,6 +192,91 @@ export async function decideReview(
     .insert(eventDiscord)
     .values({ eventId, reviewedBy: userId, reviewedAt: nowIso, updatedAt: nowIso })
     .onConflictDoUpdate({ target: eventDiscord.eventId, set: { reviewedBy: userId, reviewedAt: nowIso, updatedAt: nowIso } });
+  // 별개 행사로 정한 쌍은 중복 검사에서 다시 묻지 않는다
+  if (decision === 'ok' && dup) await markDistinct(db, dup.id, eventId, now);
   const queued = decision === 'ok' ? await planForChange(db, updated, { created: false, statusChanged: false, reviewCleared: true }) : 0;
   return { message: reviewMessage(updated, srcs, { decision, by: userId }, dup), queued };
+}
+
+// ── 이미 공지한 행사끼리의 중복 의심 (pipeline/dedupSweep.ts가 dup_of_id를 적는다) ──────
+
+export const dupButtonId = (decision: 'mg' | 'no', eventId: number) => `dp:${decision}:${eventId}`;
+export function parseDupId(id: string): { decision: 'mg' | 'no'; eventId: number } | null {
+  const m = /^dp:(mg|no):(\d+)$/.exec(id);
+  return m ? { decision: m[1] as 'mg' | 'no', eventId: Number(m[2]) } : null;
+}
+
+const pairLine = (e: EventRow) =>
+  [`**#${e.id} ${esc(e.title)}**`, `${kindLabel(e.kind)} · ${formatPeriodKo(e.startDate, e.endDate)} · ${esc([e.city, e.venue].filter(Boolean).join(' · ') || '장소 미정')}`].join('\n');
+
+/** 중복 의심 쌍 카드: keep(먼저 등록)에 e(나중 등록)를 합칠지 묻는다 */
+export function dupPairMessage(e: EventRow, keep: EventRow, decided?: { decision: 'mg' | 'no' | 'done'; by?: string }): OutgoingMessage {
+  const result =
+    decided?.decision === 'mg'
+      ? `🔗 #${keep.id}에 합침${decided.by ? ` · <@${decided.by}>` : ''} · 중복 공지는 지웁니다`
+      : decided?.decision === 'no'
+        ? `↔️ 별개 행사로 둠${decided.by ? ` · <@${decided.by}>` : ''}`
+        : decided?.decision === 'done'
+          ? '이미 처리된 쌍입니다'
+          : null;
+  const lines = ['-# 🔁 중복 의심 · 이미 공지한 두 행사가 같은 행사로 보여요', `남길 행사\n${pairLine(keep)}`, `합칠 행사\n${pairLine(e)}`];
+  const c = new ContainerBuilder().setAccentColor(decided ? CARD_COLOR.off : CARD_COLOR.fail).addTextDisplayComponents((t) => t.setContent(lines.join('\n\n').slice(0, 1900)));
+  if (result) c.addTextDisplayComponents((t) => t.setContent(`-# ${result}`));
+  else {
+    c.addActionRowComponents((r) =>
+      r.setComponents(
+        new ButtonBuilder().setCustomId(dupButtonId('mg', e.id)).setLabel('🔗 같은 행사로 합치기').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(dupButtonId('no', e.id)).setLabel('↔️ 별개 행사').setStyle(ButtonStyle.Secondary),
+      ),
+    );
+  }
+  return { card: [c.toJSON()], content: [...lines, result ?? '`/관리 합치기`로 처리할 수 있어요.'].join('\n\n').slice(0, 1900) };
+}
+
+/** 아직 카드를 올리지 않은 중복 의심 쌍을 관리자 채널에 올린다 */
+export async function postPendingDupCards(db: Db, poster: ReviewPoster, channelId: string, now = new Date()): Promise<number> {
+  const rows = await db
+    .select({ e: events })
+    .from(events)
+    .leftJoin(eventDiscord, eq(eventDiscord.eventId, events.id))
+    .where(and(eq(events.needsReview, 0), isNotNull(events.dupOfId), isNull(events.mergedInto), isNull(eventDiscord.dupMessageId)))
+    .orderBy(events.id)
+    .limit(REVIEW_BATCH);
+  let posted = 0;
+  for (const { e } of rows) {
+    const keep = await dupTarget(db, e);
+    if (!keep || keep.id === e.id) {
+      await db.update(events).set({ dupOfId: null }).where(eq(events.id, e.id));
+      continue;
+    }
+    const messageId = await poster.post(channelId, dupPairMessage(e, keep));
+    const updatedAt = now.toISOString();
+    await db.insert(eventDiscord).values({ eventId: e.id, dupMessageId: messageId, updatedAt }).onConflictDoUpdate({ target: eventDiscord.eventId, set: { dupMessageId: messageId, updatedAt } });
+    posted++;
+  }
+  return posted;
+}
+
+/**
+ * 중복 의심 쌍 버튼. 합치면 e를 keep에 합치고(공지 정리는 호출한 쪽에서), 별개면 다시 묻지 않게 적는다.
+ * @returns 카드에 다시 그릴 메시지, 합쳤으면 merged에 남긴 행사 번호
+ */
+export async function decideDupPair(db: Db, eventId: number, decision: 'mg' | 'no', userId: string, now = new Date()): Promise<{ message: OutgoingMessage; mergedInto?: number } | null> {
+  const [e] = await db.select().from(events).where(eq(events.id, eventId));
+  if (!e) return null;
+  const keep = await dupTarget(db, e);
+  if (!keep || e.mergedInto) {
+    const [target] = e.mergedInto ? await db.select().from(events).where(eq(events.id, e.mergedInto)) : [];
+    return { message: dupPairMessage(e, keep ?? target ?? e, { decision: 'done' }) };
+  }
+  const clearCard = () => db.update(eventDiscord).set({ dupMessageId: null }).where(eq(eventDiscord.eventId, eventId));
+  if (decision === 'no') {
+    await db.update(events).set({ dupOfId: null }).where(eq(events.id, eventId));
+    await markDistinct(db, keep.id, eventId, now);
+    await clearCard();
+    return { message: dupPairMessage(e, keep, { decision: 'no', by: userId }) };
+  }
+  await mergeEvents(db, keep.id, eventId, userId, now);
+  await clearCard();
+  return { message: dupPairMessage(e, keep, { decision: 'mg', by: userId }), mergedInto: keep.id };
 }

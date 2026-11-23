@@ -291,12 +291,11 @@
     "name": "프로세카 한국 서버 (뉴버스)",
     "layer": "L2",
     "adapter": "x_crawl",
-    "target": "TODO",
+    "target": "kr_pjsekai",
     "region": "KR",
     "interval_min": 180,
-    "enabled": false,
     "config": {
-      "todo": "공식 X·인스타그램 계정 미확인"
+      "note": "한국 App Store 앱 설명에 적힌 공식 X 계정 (2026-11-23 확인). 인스타그램 계정은 미확인"
     }
   },
   {

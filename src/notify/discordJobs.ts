@@ -5,9 +5,11 @@ import type { Alerter } from '../alerts.js';
 import { acquireLock } from '../scheduler/lock.js';
 import type { DiscordBot } from './discord.js';
 import type { Notifier } from './notifier.js';
-import { postPendingReviews } from './review.js';
+import { postPendingDupCards, postPendingReviews } from './review.js';
+import { monthlyCalendar } from './calendarImage.js';
+import { SETTING_DUP_SWEEP, getSetting, setSetting } from '../services/settings.js';
 import { syncGuildEvents } from './guildEvents.js';
-import { weeklyData, weeklyMessage } from './weekly.js';
+import { missReport, missReportMessage, weeklyData, weeklyMessage } from './weekly.js';
 import { MemberListError, ROLE_NAME, ensureSubscriptionSetup, syncDefaultMembers, type MemberSyncResult } from './subscriptions.js';
 import { syncStatusBoard } from './statusBoard.js';
 import { resolveReports } from './reports.js';
@@ -19,6 +21,9 @@ import { resolveReports } from './reports.js';
  * - 매주 월요일 09:00 KST: 이번 주 행사 요약을 공지 채널로 (job lock으로 주 1회)
  * - 1분마다: 판정이 끝난 제보의 결과를 관리자 채널 제보 카드에 적는다
  * - 10분마다(봇 준비 직후 한 번 포함): 알림 역할·구독 패널, 기본 구독(국내 역할 일괄), 관리자 상태판, 권한 점검
+ * - 1분마다: 이미 공지한 행사끼리의 중복 의심 쌍 카드를 관리자 채널에. 기존 행사 중복 검사는 배포 후 한 번 자동으로 돈다
+ * - 매주 월요일: 지난 7일 제보 리포트(놓친 행사)를 관리자 채널에
+ * - 매월 1일 09:00 KST: 이번 달 행사 달력 그림을 공지 채널에 (job lock으로 월 1회)
  */
 export interface DiscordJobsDeps {
   db: Db;
@@ -29,6 +34,8 @@ export interface DiscordJobsDeps {
   noticeChannelId?: string;
   /** 환경 변수 NOTIFY_PAUSED (상태판 표시용) */
   notifyPausedEnv?: boolean;
+  /** 이미 등록된 행사끼리의 중복 검사 (Claude 키가 없으면 undefined) */
+  dupSweep?: () => Promise<{ checked: number; flagged: number; more: boolean }>;
   now?: () => Date;
   log?: Pick<Console, 'log' | 'warn' | 'error'>;
 }
@@ -130,6 +137,50 @@ export function createDiscordJobs(deps: DiscordJobsDeps) {
     return r;
   }
 
+  /** 중복 의심 쌍 카드 (이미 공지한 행사끼리) */
+  async function dupCards() {
+    const bot = deps.bot();
+    if (!bot?.isReady() || !deps.adminChannelId) return 0;
+    return postPendingDupCards(deps.db, bot, deps.adminChannelId, now());
+  }
+
+  /** 기존 행사 중복 검사: 배포 후 한 번. 남은 게 있으면 다음 10분 틱에 이어서 */
+  async function autoDupSweep() {
+    if (!deps.dupSweep || (await getSetting(deps.db, SETTING_DUP_SWEEP)) === 'done') return null;
+    const r = await deps.dupSweep();
+    if (!r.more) await setSetting(deps.db, SETTING_DUP_SWEEP, 'done', now());
+    if (r.checked > 0) log.log(`기존 행사 중복 검사: ${r.checked}건 확인, 의심 ${r.flagged}쌍`);
+    return r;
+  }
+
+  /** 이번 달 달력 그림을 공지 채널에 올린다. 행사가 없으면 올리지 않는다 */
+  async function postCalendar(): Promise<string> {
+    const bot = deps.bot();
+    if (!bot?.isReady() || !deps.noticeChannelId) return '봇이 준비되지 않았거나 공지 채널이 설정되지 않았어요.';
+    const cal = await monthlyCalendar(deps.db, now());
+    if (!cal) return '이번 달에 등록된 행사가 없어 달력을 올리지 않았어요.';
+    await bot.postFile(deps.noticeChannelId, `🗓️ **${cal.title}** · 행사 ${cal.total}건\n-# \`/행사\`로 자세히 볼 수 있어요. 새 행사는 공지로 계속 알려 드려요.`, { name: cal.fileName, data: cal.png });
+    return `🗓️ ${cal.title}을 공지 채널에 올렸어요 (행사 ${cal.total}건).`;
+  }
+
+  async function monthly() {
+    // 재시작해도 같은 달에 두 번 올리지 않게 20일짜리 락을 잡고 풀지 않는다
+    if (!(await acquireLock(deps.db, 'monthly_calendar', owner, 20 * 24 * 60, now()))) return false;
+    log.log(await postCalendar());
+    return true;
+  }
+
+  /** 지난 7일 제보 리포트 (관리자 채널) */
+  async function missReportJob() {
+    const bot = deps.bot();
+    if (!bot?.isReady() || !deps.adminChannelId) return false;
+    if (!(await acquireLock(deps.db, 'weekly_miss_report', owner, 6 * 24 * 60, now()))) return false;
+    const msg = missReportMessage(await missReport(deps.db, now()));
+    if (!msg) return false;
+    await bot.post(deps.adminChannelId, msg);
+    return true;
+  }
+
   async function weekly() {
     // 재시작해도 같은 주에 두 번 보내지 않게 6일짜리 락을 잡고 풀지 않는다
     if (!(await acquireLock(deps.db, 'weekly_digest', owner, 6 * 24 * 60, now()))) return false;
@@ -149,12 +200,14 @@ export function createDiscordJobs(deps: DiscordJobsDeps) {
       const msg = (err: unknown) => (err instanceof Error ? err.message : String(err));
       await reviews().catch((err: unknown) => deps.alerter.alert(`검수 카드 게시 실패: ${msg(err)}`));
       await reports().catch((err: unknown) => deps.alerter.alert(`제보 결과 기록 실패: ${msg(err)}`));
+      await dupCards().catch((err: unknown) => deps.alerter.alert(`중복 의심 카드 게시 실패: ${msg(err)}`));
       const first = !setupDone && !!deps.bot()?.isReady();
       if (first || now().getUTCMinutes() % 10 === 0) {
         if (first) setupDone = true;
         await setup().catch((err: unknown) => dailyAlert('setup', `알림 역할·구독 패널 준비 실패: ${msg(err)}`));
         await statusBoard().catch((err: unknown) => dailyAlert('board', `상태판 갱신 실패: ${msg(err)}`));
         await guildEvents().catch((err: unknown) => deps.alerter.alert(`서버 이벤트 동기화 실패: ${msg(err)}`));
+        await autoDupSweep().catch((err: unknown) => dailyAlert('dupsweep', `기존 행사 중복 검사 실패: ${msg(err)}`));
       }
     } finally {
       running = false;
@@ -165,6 +218,11 @@ export function createDiscordJobs(deps: DiscordJobsDeps) {
     reviews,
     guildEvents,
     weekly,
+    dupCards,
+    autoDupSweep,
+    postCalendar,
+    monthly,
+    missReportJob,
     setup,
     statusBoard,
     reports,
@@ -173,7 +231,17 @@ export function createDiscordJobs(deps: DiscordJobsDeps) {
       tasks.push(
         cron.schedule(
           '0 9 * * 1',
-          () => void weekly().catch((err: unknown) => deps.alerter.alert(`이번 주 요약 발송 실패: ${err instanceof Error ? err.message : String(err)}`)),
+          () => {
+            void weekly().catch((err: unknown) => deps.alerter.alert(`이번 주 요약 발송 실패: ${err instanceof Error ? err.message : String(err)}`));
+            void missReportJob().catch((err: unknown) => deps.alerter.alert(`제보 리포트 발송 실패: ${err instanceof Error ? err.message : String(err)}`));
+          },
+          { timezone: 'Asia/Seoul' },
+        ),
+      );
+      tasks.push(
+        cron.schedule(
+          '0 9 1 * *',
+          () => void monthly().catch((err: unknown) => deps.alerter.alert(`월간 달력 발송 실패: ${err instanceof Error ? err.message : String(err)}`)),
           { timezone: 'Asia/Seoul' },
         ),
       );

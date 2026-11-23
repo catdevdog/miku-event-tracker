@@ -17,9 +17,10 @@ import type { EventDetail } from '../services/events.js';
 import { discordTime, formatKstShort, formatPeriodKo } from './format.js';
 import {
   CARD_COLOR, DOT, KIND_GROUPS, OFFICIALITY_KO, REGION_IMAGES, STATUS_ICON, STATUS_KO, TICKETED_KINDS,
-  actionLabel, dateLabel, kindLabel, regionMeta, type KindGroup,
+  NO_RSVP_KINDS, actionLabel, dateLabel, kindLabel, regionMeta, type KindGroup,
 } from './labels.js';
 import { linkTier } from '../pipeline/links.js';
+import { parsePresales } from '../pipeline/merge.js';
 
 /**
  * 디스코드 Components V2 카드. 봇으로 보낼 때만 쓰고, 웹후크나 카드가 거부될 때는 같은 메시지의 embeds로 보낸다.
@@ -111,12 +112,24 @@ export function detailLines(e: EventRow): string[] {
   return [
     `📅 **${dateLabel(e.kind)}**　${formatPeriodKo(e.startDate, e.endDate)}`,
     ...(place || !noPlaceKind ? [`📍 **장소**　${esc(place || '미정')}`] : []),
+    ...presaleLines(e),
     ...(e.ticketOpenAt
       ? [`🎫 **티켓 오픈**　${formatKstShort(e.ticketOpenAt)} KST · ${discordTime(e.ticketOpenAt, 'R')}`]
       : TICKETED_KINDS.has(e.kind)
         ? ['🎫 **티켓 오픈**　미정']
         : []),
   ];
+}
+
+/** 선예매·추첨 접수 줄 (3개까지): "🎟️ **팬클럽 선예매**　2026.12.01(화) 20:00 KST · 3일 후 ~ 12.03 23:59 마감" */
+export function presaleLines(e: Pick<EventRow, 'presales'>): string[] {
+  return parsePresales(e.presales)
+    .slice(0, 3)
+    .map((p) => {
+      const open = p.open_at ? `${formatKstShort(p.open_at)} KST · ${discordTime(p.open_at, 'R')}` : '';
+      const close = p.close_at ? `${open ? ' ' : ''}~ ${formatKstShort(p.close_at)} 마감` : '';
+      return `🎟️ **${esc(p.label)}**　${open}${close}`;
+    });
 }
 
 /** 행동 링크(예매·예약·판매) 버튼 문구 */
@@ -127,6 +140,7 @@ export function noticeCard(
   e: EventRow,
   head: { label: string; icon: string; color: number },
   sourceUrls: string[],
+  opts: { note?: string; going?: number } = {},
 ): Card {
   const region = regionMeta(e.region);
   const ticketUrl = linkable(e.ticketUrl) ? e.ticketUrl : undefined;
@@ -150,7 +164,7 @@ export function noticeCard(
       ),
     )
     .addSeparatorComponents((s) => s.setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents((t) => t.setContent(details.join('\n')));
+    .addTextDisplayComponents((t) => t.setContent([...(opts.note ? [opts.note, ''] : []), ...details].join('\n')));
 
   const image = REGION_IMAGES[e.region];
   if (image) c.addMediaGalleryComponents((g) => g.addItems((i) => i.setURL(image).setDescription(`${region.label} 행사`)));
@@ -163,6 +177,10 @@ export function noticeCard(
   // 개인 리마인더 (봇으로 보낸 카드에서만 동작. 웹후크는 카드 대신 임베드라 버튼이 없다)
   if (e.status !== 'ended' && e.status !== 'cancelled') {
     buttons.push(new ButtonBuilder().setCustomId(`wt:${e.id}`).setLabel('🔔 알림 받기').setStyle(ButtonStyle.Secondary));
+    // 참석 표시 (찾아가는 행사만). 한 줄에 버튼 5개까지
+    if (!NO_RSVP_KINDS.has(e.kind) && buttons.length < 5) {
+      buttons.push(new ButtonBuilder().setCustomId(`go:${e.id}`).setLabel(`🙋 갈 거예요${opts.going ? ` ${opts.going}` : ''}`).setStyle(ButtonStyle.Secondary));
+    }
   }
   if (buttons.length) c.addActionRowComponents((r) => r.setComponents(buttons));
 
@@ -433,6 +451,32 @@ export function searchResultsCard(query: string, rows: EventRow[], links: Map<nu
   for (const e of rows.slice(0, EVENTS_PAGE_SIZE)) {
     const link = links.get(e.id);
     out.push(eventBlock(e, linkable(link) ? link : undefined).toJSON());
+  }
+  return out;
+}
+
+// ── /내알림 ────────────────────────────────────────────────
+
+/** 내 알림 설정: 지역 구독 상태 + 🔔 켠 행사(끄기 버튼) + 🙋 표시한 행사 */
+export function myAlertsCard(subscriptionLine: string, watching: EventRow[], going: EventRow[]): Card {
+  const out: Card = [header('🔔 내 알림', '지역 알림은 공지 채널에 고정된 알림 설정에서 바꿔요')];
+  out.push(new ContainerBuilder().setAccentColor(CARD_COLOR.miku).addTextDisplayComponents((t) => t.setContent(`**지역 알림**　${subscriptionLine}`)).toJSON());
+  const line = (e: EventRow) => `${regionMeta(e.region).flag} **${esc(e.title)}**\n-# ${kindLabel(e.kind)} · ${formatPeriodKo(e.startDate, e.endDate)}`;
+  const watch = new ContainerBuilder().setAccentColor(CARD_COLOR.ok).addTextDisplayComponents((t) => t.setContent(`### 🔔 DM 알림을 켠 행사 · ${watching.length}`));
+  if (watching.length === 0) watch.addTextDisplayComponents((t) => t.setContent('아직 없어요. 공지 카드의 **🔔 알림 받기**를 누르면 그 행사의 티켓 오픈·판매 시작·취소·전날 알림을 DM으로 받아요.'));
+  for (const e of watching.slice(0, 8)) {
+    watch.addSectionComponents((s) =>
+      s.addTextDisplayComponents((t) => t.setContent(line(e))).setButtonAccessory(new ButtonBuilder().setCustomId(`wt:${e.id}`).setLabel('🔕 끄기').setStyle(ButtonStyle.Secondary)),
+    );
+  }
+  out.push(watch.toJSON());
+  if (going.length) {
+    out.push(
+      new ContainerBuilder()
+        .setAccentColor(CARD_COLOR.wait)
+        .addTextDisplayComponents((t) => t.setContent([`### 🙋 간다고 표시한 행사 · ${going.length}`, ...going.slice(0, 8).map(line)].join('\n')))
+        .toJSON(),
+    );
   }
   return out;
 }

@@ -36,6 +36,13 @@
       "when": 1795404133126,
       "tag": "0004_kinds_dedup",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1795416932326,
+      "tag": "0005_presales_rsvp",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,7 @@ import { createNotifier, dedupAlerter } from './notify/notifier.js';
 import { listUpcomingEvents } from './services/events.js';
 import { isNotifyPaused } from './services/settings.js';
 import { cleanupActionLinks } from './pipeline/merge.js';
+import { sweepDuplicates } from './pipeline/dedupSweep.js';
 import { createDiscordJobs } from './notify/discordJobs.js';
 import { createInteractionHandlers } from './notify/interactions.js';
 import { deliverNotice } from './notify/noticeThreads.js';
@@ -56,6 +57,9 @@ const scheduler = createScheduler({ db, adapters: createAdapters(config, db), al
 scheduler.start();
 
 const qa = config.ANTHROPIC_API_KEY ? createQaAnswerer(db, config.ANTHROPIC_API_KEY) : undefined;
+const extractor = config.ANTHROPIC_API_KEY ? createAnthropicExtractor(config.ANTHROPIC_API_KEY) : undefined;
+// 이미 등록된 행사끼리의 중복 검사 (배포 후 한 번 자동, /관리 중복검사로 다시)
+const dupSweep = extractor ? () => sweepDuplicates(db, extractor) : undefined;
 
 // 디스코드 주기 작업: 검수 카드·제보 결과(1분), 알림 역할·구독 패널·기본 구독·상태판·서버 이벤트(10분), 이번 주 요약(월 09:00 KST)
 const discordJobs = createDiscordJobs({
@@ -66,6 +70,7 @@ const discordJobs = createDiscordJobs({
   adminChannelId: config.DISCORD_ADMIN_CHANNEL_ID,
   noticeChannelId: config.DISCORD_NOTICE_CHANNEL_ID,
   notifyPausedEnv: config.NOTIFY_PAUSED,
+  dupSweep,
 });
 
 if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID) {
@@ -82,6 +87,8 @@ if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID
     adminChannelId: config.DISCORD_ADMIN_CHANNEL_ID,
     notifyPausedEnv: config.NOTIFY_PAUSED,
     uptimeSec,
+    dupSweep,
+    postCalendar: () => discordJobs.postCalendar(),
     setupNow: async () => {
       const r = await discordJobs.setup();
       await discordJobs.statusBoard().catch(() => null);
@@ -118,7 +125,7 @@ await ensureDefaultSubscriber(db, { noticeChannelId: config.DISCORD_NOTICE_CHANN
 if (!config.ANTHROPIC_API_KEY) console.warn('ANTHROPIC_API_KEY가 없어 키워드 판정까지만 하고 추출은 하지 않습니다.');
 const pipeline = createPipelineRunner({
   db,
-  extractor: config.ANTHROPIC_API_KEY ? createAnthropicExtractor(config.ANTHROPIC_API_KEY) : undefined,
+  extractor,
   alerter,
   notifier,
   noticeChannelId: config.DISCORD_NOTICE_CHANNEL_ID,

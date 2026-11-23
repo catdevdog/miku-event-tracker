@@ -98,3 +98,63 @@ export function weeklyMessage(d: WeeklyData): OutgoingMessage | null {
     ],
   };
 }
+
+// ── 놓친 행사 주간 리포트 (관리자 채널) ──────────────────────
+
+export interface MissReport {
+  /** 제보로 처음 알게 된 행사 (봇이 먼저 못 잡은 것) */
+  missed: { title: string; source: string | null }[];
+  /** 제보가 왔지만 이미 수집돼 있던 행사 수 */
+  caught: number;
+  /** 제보 중 관련 없다고 판정한 수 */
+  irrelevant: number;
+  /** 놓친 행사 출처의 사이트별 건수 (많은 순) */
+  hosts: { host: string; n: number }[];
+}
+
+const hostOf = (url: string | null) => {
+  try {
+    return url ? new URL(url).hostname.replace(/^www\./, '') : null;
+  } catch {
+    return null;
+  }
+};
+
+/** 지난 7일의 제보·누락 기록 */
+export async function missReport(db: Db, now: Date): Promise<MissReport> {
+  const since = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+  const rows = await db.all<{ title: string | null; source: string | null; caught: number }>(sql`
+    SELECT e.title AS title, m.first_seen_source AS source, m.caught_by_system AS caught
+    FROM misses m LEFT JOIN events e ON e.id = m.event_id
+    WHERE m.noticed_at >= ${since} ORDER BY m.id
+  `);
+  const [irr] = await db.all<{ n: number }>(sql`SELECT count(*) AS n FROM reports WHERE created_at >= ${since} AND result LIKE '⚪%'`);
+  const missed = rows.filter((r) => !r.caught).map((r) => ({ title: r.title ?? '(지워진 행사)', source: r.source }));
+  const counts = new Map<string, number>();
+  for (const m of missed) {
+    const h = hostOf(m.source);
+    if (h) counts.set(h, (counts.get(h) ?? 0) + 1);
+  }
+  return {
+    missed,
+    caught: rows.length - missed.length,
+    irrelevant: Number(irr?.n ?? 0),
+    hosts: [...counts].map(([host, n]) => ({ host, n })).sort((a, b) => b.n - a.n),
+  };
+}
+
+/** 관리자 채널용 리포트. 제보가 하나도 없었으면 null */
+export function missReportMessage(r: MissReport): OutgoingMessage | null {
+  if (r.missed.length + r.caught + r.irrelevant === 0) return null;
+  const lines = [
+    '### 📮 지난 7일 제보 리포트',
+    `놓친 행사 **${r.missed.length}** · 이미 잡은 행사 ${r.caught} · 관련 없음 ${r.irrelevant}`,
+    ...r.missed.slice(0, 10).map((m) => `- ${esc(m.title)}${hostOf(m.source) ? ` · ${hostOf(m.source)}` : ''}`),
+    ...(r.hosts.length ? ['', `**놓친 출처**　${r.hosts.slice(0, 6).map((h) => `${h.host} ${h.n}건`).join(' · ')}`, '-# 자주 나오는 사이트는 수집처로 추가하거나 `/관리 키워드`로 키워드를 보강해 보세요.'] : []),
+  ];
+  const text = lines.join('\n').slice(0, 1900);
+  return {
+    card: [new ContainerBuilder().setAccentColor(r.missed.length ? CARD_COLOR.fail : CARD_COLOR.ok).addTextDisplayComponents((t) => t.setContent(text)).toJSON()],
+    content: text,
+  };
+}

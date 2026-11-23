@@ -5,9 +5,9 @@ import { eventDiscord, events } from '../db/schema.js';
 import type { EventRow } from '../pipeline/merge.js';
 import { discordErrorCode, type DiscordBot } from './discord.js';
 import type { Notifier } from './notifier.js';
-import { eventSourceUrls, renderEventMessage, type NotifyReason } from './planner.js';
+import { eventSourceUrls, goingCount, renderEventMessage, type NotifyReason } from './planner.js';
 import { mentionRoleFor } from './subscriptions.js';
-import { KIND_ICON } from './labels.js';
+import { KIND_ICON, QUIET_KINDS } from './labels.js';
 import type { OutgoingMessage } from './types.js';
 
 /**
@@ -50,7 +50,7 @@ export function withoutImages(msg: OutgoingMessage): OutgoingMessage {
 
 /** 원래 공지 카드를 지금 상태로 다시 그린다 (머리말: 발표면 새 행사, 아니면 지금 상태) */
 export async function currentNoticeMessage(db: Db, e: EventRow): Promise<OutgoingMessage> {
-  return renderEventMessage(e, e.status === 'announced' ? 'new' : 'status_change', '', await eventSourceUrls(db, e.id));
+  return renderEventMessage(e, e.status === 'announced' ? 'new' : 'status_change', '', await eventSourceUrls(db, e.id), { going: await goingCount(db, e.id) });
 }
 
 async function noticeIds(db: Db, eventId: number) {
@@ -85,7 +85,8 @@ export async function deliverNotice(deps: NoticeDeliveryDeps, job: NoticeJob): P
   const [e] = await db.select().from(events).where(eq(events.id, job.eventId));
   if (!e) throw new Error(`행사 #${job.eventId}이(가) 없습니다`);
   const ids = await noticeIds(db, e.id);
-  const roleId = await mentionRoleFor(db, e.region);
+  // 굿즈·콜라보 소식은 멘션 없이 조용히 올린다
+  const roleId = QUIET_KINDS.has(e.kind) ? undefined : await mentionRoleFor(db, e.region);
 
   // 첫 공지 (또는 이 기능 전에 보낸 행사라 원래 카드를 모를 때): 채널에 멘션 + 스레드
   const postFresh = async (): Promise<NoticeOutcome> => {

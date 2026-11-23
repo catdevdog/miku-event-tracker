@@ -116,6 +116,8 @@ export interface DiscordBot extends ChannelSender {
   /** 메시지에서 공개 스레드를 연다 (일주일 동안 조용하면 보관). 스레드 ID를 돌려준다 */
   startThread(channelId: string, messageId: string, name: string): Promise<string>;
   pinMessage(channelId: string, messageId: string): Promise<void>;
+  /** 그림 파일 한 장을 글과 함께 올린다 (월간 달력) */
+  postFile(channelId: string, content: string, file: { name: string; data: Buffer }): Promise<string>;
   /** 봇이 보낸 메시지를 지운다 (이미 없으면 무시) */
   deleteMessage(channelId: string, messageId: string): Promise<void>;
   /** 역할이 있으면 그 ID, 없으면 이름으로 찾고, 그래도 없으면 만든다 */
@@ -519,6 +521,11 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
         body: { name: name.slice(0, 100) || '행사 소식', auto_archive_duration: 10080 },
       })) as { id: string };
       return thread.id;
+    },
+    async postFile(channelId: string, content: string, file: { name: string; data: Buffer }) {
+      const channel = await sendable(channelId);
+      const sent = await channel.send({ content: truncate(content), files: [{ attachment: file.data, name: file.name }], allowedMentions: { parse: [] } });
+      return sent.id;
     },
     async deleteMessage(channelId: string, messageId: string) {
       await client.rest.delete(Routes.channelMessage(channelId, messageId)).catch((err: unknown) => {

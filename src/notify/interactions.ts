@@ -29,10 +29,10 @@ import { SETTING, deleteSetting, isNotifyPaused, setSetting } from '../services/
 import { EVENT_KINDS, KEYWORD_TIERS } from '../db/schema.js';
 import { buildDiagnosticsReply, buildEventsReply, buildPingReply, buildRecentReply, buildSourcesReply } from './commands.js';
 import { buildGuideReply } from './guide.js';
-import { EVENTS_PAGE_SIZE, eventDetailCard, parseEventsPageId, searchResultsCard } from './cards.js';
-import { decideReview, parseReviewId } from './review.js';
-import { parseSubId, toggleSubscription } from './subscriptions.js';
-import { parseWatchId, toggleWatch } from './watchers.js';
+import { EVENTS_PAGE_SIZE, eventDetailCard, myAlertsCard, parseEventsPageId, searchResultsCard } from './cards.js';
+import { decideDupPair, decideReview, parseDupId, parseReviewId } from './review.js';
+import { parseSubId, roleIds, subscriptionLine, toggleSubscription } from './subscriptions.js';
+import { myEvents, parseGoId, parseWatchId, toggleGoing, toggleWatch } from './watchers.js';
 import { createReport, firstUrl, postReportCard } from './reports.js';
 import { noticeThreadUrl, refreshNoticeCard, removeNotice, type NoticeDeliveryDeps } from './noticeThreads.js';
 import { KIND_GROUPS, kindLabel, parseKindGroup, type KindGroup } from './labels.js';
@@ -52,6 +52,10 @@ export interface InteractionDeps {
   adminChannelId?: string;
   notifyPausedEnv?: boolean;
   uptimeSec: () => number;
+  /** /관리 중복검사: 이미 등록된 행사끼리 같은 행사인지 검사 (Claude 키가 없으면 undefined) */
+  dupSweep?: () => Promise<{ checked: number; flagged: number; more: boolean }>;
+  /** /관리 달력: 이번 달 달력을 공지 채널에 올린다 */
+  postCalendar?: () => Promise<string>;
   /** /관리 설정: 역할·패널·상태판을 지금 다시 맞춘다 */
   setupNow?: () => Promise<{ missing?: string[]; members?: { added: number; initialized: number; failed: number } | null; memberError?: string; errors?: string[] } | null>;
   now?: () => Date;
@@ -175,6 +179,19 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
         const env = deps.notifyPausedEnv ? '\n-# 환경 변수 NOTIFY_PAUSED=1이 켜져 있어 여기서 재개해도 보내지 않아요. Railway 변수에서 지워 주세요.' : '';
         return `${paused ? '⏸️ 알림 일시정지 중: 알림은 쌓아 두고 보내지 않아요.' : '▶️ 알림을 보내고 있어요.'}${env}`;
       }
+      case '중복검사': {
+        if (!deps.dupSweep) return '중복 검사는 Claude API 키(ANTHROPIC_API_KEY)가 있어야 해요.';
+        const r = await deps.dupSweep();
+        return [
+          `🔁 다가오는 행사 중 겹쳐 보이는 ${r.checked}건을 확인했어요. 같은 행사로 의심되는 쌍: **${r.flagged}건**`,
+          r.flagged ? '1분 안에 관리자 채널에 [같은 행사로 합치기]·[별개 행사] 카드가 올라와요.' : '',
+          r.more ? '확인할 행사가 더 있어요. 한 번 더 실행해 주세요.' : '',
+        ]
+          .filter(Boolean)
+          .join('\n');
+      }
+      case '달력':
+        return deps.postCalendar ? deps.postCalendar() : '봇이 준비되지 않았어요.';
       case '설정': {
         const r = await deps.setupNow?.();
         if (!r) return '봇이 준비되지 않았거나 공지 채널이 설정되지 않았어요.';
@@ -207,6 +224,11 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
           return buildDiagnosticsReply(await getDiagnostics(db));
         case '가이드':
           return buildGuideReply(await listCollectionPlan(db));
+        case '내알림': {
+          const { watching, going } = await myEvents(db, ctx.userId);
+          const line = subscriptionLine(await roleIds(db), ctx.memberRoleIds);
+          return { card: myAlertsCard(line, watching, going), content: `지역 알림: ${line}\n🔔 ${watching.map((e) => e.title).join(', ') || '없음'}` };
+        }
         case '제보':
           return report(ctx, { url: ctx.getString('링크') ?? undefined, note: ctx.getString('메모') ?? undefined });
         case '행사 제보': {
@@ -245,6 +267,27 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
       }
       const watch = parseWatchId(customId);
       if (watch) return { reply: await toggleWatch(db, watch, ctx.userId, now()) };
+      const go = parseGoId(customId);
+      if (go) {
+        const r = await toggleGoing(db, go, ctx.userId, now());
+        if (r.changed) {
+          // 공지 카드의 참석 수를 맞춘다
+          const e = await getEvent(db, go);
+          if (e) await refreshNoticeCard(noticeDeps(), e).catch(() => false);
+        }
+        return { reply: r.reply };
+      }
+      const dupPair = parseDupId(customId);
+      if (dupPair) {
+        if (!ctx.isAdmin) return { reply: ADMIN_ONLY };
+        const r = await decideDupPair(db, dupPair.eventId, dupPair.decision, ctx.userId, now());
+        if (r?.mergedInto) {
+          await removeNotice(noticeDeps(), dupPair.eventId, r.mergedInto, deps.guildId).catch(() => false);
+          const kept = await getEvent(db, r.mergedInto);
+          if (kept) await refreshNoticeCard(noticeDeps(), kept).catch(() => false);
+        }
+        return r?.message ?? null;
+      }
       return null;
     },
 
@@ -257,11 +300,11 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
       const r = await editEvent(db, Number(m[1]), parsed.fields, ctx.userId, now());
       if (!r) return '행사를 찾을 수 없어요.';
       if (r.changed.length === 0 && !r.statusChanged) return '바뀐 내용이 없어요.';
-      const queued = r.statusChanged ? await planForChange(db, r.event, { created: false, statusChanged: true }) : 0;
+      const queued = await planForChange(db, r.event, { created: false, statusChanged: r.statusChanged, changes: r.notable });
       const refreshed = await refreshNoticeCard(noticeDeps(), r.event).catch(() => false);
       return [
         `✏️ #${r.event.id} **${r.event.title}** 수정: ${r.changed.length ? r.changed.join(', ') : '상태'}`,
-        ...(r.statusChanged ? [`상태가 바뀌어 알림 ${queued}건을 보낼게요 (1분 안에).`] : []),
+        ...(queued ? [`${r.statusChanged ? '상태' : '일정·장소'}가 바뀌어 알림 ${queued}건을 보낼게요 (1분 안에).`] : []),
         ...(refreshed ? ['공지 카드도 고쳤어요.'] : []),
         '-# 서버 이벤트는 10분 안에 맞춰져요.',
       ].join('\n');

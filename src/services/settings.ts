@@ -30,3 +30,6 @@ export async function deleteSetting(db: Db, key: string): Promise<void> {
 export async function isNotifyPaused(db: Db, envPaused?: boolean): Promise<boolean> {
   return !!envPaused || (await getSetting(db, SETTING.notifyPaused)) === '1';
 }
+
+/** 기존 행사 중복 검사를 한 번 끝냈는지 ('done') */
+export const SETTING_DUP_SWEEP = 'dup_sweep_v1';

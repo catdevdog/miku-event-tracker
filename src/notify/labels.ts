@@ -86,3 +86,12 @@ export const REGION_IMAGES: Record<string, string | undefined> = {
   OTHER: `${ASSET_BASE}/region-overseas.png`,
 };
 
+
+/** 공지할 때 역할 멘션을 하지 않는 유형 (발매·콜라보 소식은 조용히 올린다) */
+export const QUIET_KINDS = new Set(['goods', 'collab']);
+
+/** 참석 표시(🙋)를 받지 않는 유형 */
+export const NO_RSVP_KINDS = new Set(['goods', 'collab']);
+
+/** 끝나기 3일 전에 알리는 유형 (기간 동안 열려 있는 것) */
+export const ENDING_SOON_KINDS = new Set(['popup', 'cafe', 'exhibition', 'collab']);

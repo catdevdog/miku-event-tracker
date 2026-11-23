@@ -83,6 +83,7 @@ CREATE TABLE events (
   merged_into     INTEGER REFERENCES events(id),         -- /관리 합치기로 흡수된 행사 → 남긴 행사 (새 출처도 그쪽으로)
   aliases         TEXT    NOT NULL DEFAULT '[]',         -- 다른 출처가 쓴 제목들 (JSON 배열). 같은 행사 찾기에 쓴다
   dup_of_id       INTEGER REFERENCES events(id),         -- 같은 행사로 의심되는 기존 행사 (검수 카드에 합치기·별개 버튼)
+  presales        TEXT    NOT NULL DEFAULT '[]',         -- 선예매·추첨 접수 일정 (JSON 배열: {label, open_at, close_at})
   created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -123,6 +124,7 @@ CREATE TABLE event_discord (
   guild_event_hash  TEXT,                                -- 마지막으로 반영한 제목·일정·장소 해시
   notice_message_id TEXT,                                -- 공지 채널의 첫 공지 메시지 (상태가 바뀌면 이 카드를 고친다)
   notice_thread_id  TEXT,                                -- 그 공지에 단 스레드 (상태 변경 소식을 여기에 쓴다)
+  dup_message_id    TEXT,                                -- 이미 공지한 행사끼리 중복이 의심될 때 관리자 채널에 올린 카드
   updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -218,4 +220,20 @@ CREATE TABLE reports (
   result           TEXT,                                 -- 판정 결과 요약
   resolved_at      TEXT,
   created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 참석 표시(🙋 갈 거예요)
+CREATE TABLE event_attendees (
+  event_id   INTEGER NOT NULL REFERENCES events(id),
+  user_id    TEXT    NOT NULL,
+  created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (event_id, user_id)
+);
+
+-- 관리자가 "별개 행사"라고 정한 쌍 (a_id < b_id). 중복 검사에서 다시 묻지 않는다
+CREATE TABLE event_distinct (
+  a_id       INTEGER NOT NULL REFERENCES events(id),
+  b_id       INTEGER NOT NULL REFERENCES events(id),
+  created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (a_id, b_id)
 );

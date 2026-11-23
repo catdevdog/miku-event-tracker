@@ -1,7 +1,7 @@
 import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { eventSources, eventStateLog, events } from '../db/schema.js';
-import type { Extraction, MatchCandidate, MatchResult } from './extract.js';
+import type { Extraction, MatchCandidate, MatchResult, Presale } from './extract.js';
 import { actionUrl, mayReplaceLink } from './links.js';
 import { deriveStatus, nextStatus, type EventStatus } from './state.js';
 
@@ -67,6 +67,71 @@ export function bestTitleSimilarity(e: Pick<EventRow, 'title' | 'aliases'>, titl
   return Math.max(titleSimilarity(e.title, title), ...parseAliases(e.aliases).map((a) => titleSimilarity(a, title)));
 }
 
+/** events.presales (JSON 배열) */
+export function parsePresales(json: string | null | undefined): Presale[] {
+  try {
+    const v = JSON.parse(json ?? '[]') as unknown;
+    if (!Array.isArray(v)) return [];
+    return v.filter((p): p is Presale => !!p && typeof (p as Presale).label === 'string');
+  } catch {
+    return [];
+  }
+}
+
+/** 선예매 일정 합치기: 이름이 같으면 새 값으로 바꾸고, 새 이름은 추가한다 (5개까지, 시작 시각 순) */
+export function mergePresales(existing: Presale[], incoming: Presale[]): Presale[] {
+  const out = [...existing];
+  for (const p of incoming) {
+    const i = out.findIndex((x) => normalizeKey(x.label) === normalizeKey(p.label));
+    if (i >= 0) out[i] = { label: out[i]!.label, open_at: p.open_at ?? out[i]!.open_at, close_at: p.close_at ?? out[i]!.close_at };
+    else out.push(p);
+  }
+  return out.sort((a, b) => (a.open_at ?? a.close_at ?? '').localeCompare(b.open_at ?? b.close_at ?? '')).slice(0, 5);
+}
+
+/** 알릴 만한 변경 (일정·장소). 표시용 문구는 notify 쪽에서 만든다 */
+export interface NotableChange {
+  field: 'dates' | 'venue';
+  from: string | null;
+  to: string | null;
+}
+
+const period = (e: Pick<EventRow, 'startDate' | 'endDate'>) => (e.startDate ? `${e.startDate}~${e.endDate ?? e.startDate}` : null);
+
+/** 글자 종류: 한글·가나(한자 포함)·라틴 중 가장 많은 것 */
+function script(s: string): 'ko' | 'ja' | 'latin' {
+  const ko = (s.match(/[\uac00-\ud7af]/g) ?? []).length;
+  const ja = (s.match(/[\u3040-\u30ff\u4e00-\u9fff]/g) ?? []).length;
+  const la = (s.match(/[a-z]/gi) ?? []).length;
+  return ko >= ja && ko >= la ? 'ko' : ja >= la ? 'ja' : 'latin';
+}
+
+/**
+ * 같은 장소의 다른 표기로 볼 수 있는지: 언어가 다르거나(롯데콘서트홀 ↔ LOTTE Concert Hall),
+ * 한쪽이 다른 쪽을 포함하거나(킨텍스 ↔ 일산 킨텍스 제2전시장), 글자가 꽤 겹치는 경우.
+ */
+export function sameVenueName(a: string, b: string): boolean {
+  const x = normalizeKey(a);
+  const y = normalizeKey(b);
+  if (!x || !y) return false;
+  return x === y || script(a) !== script(b) || x.includes(y) || y.includes(x) || titleSimilarity(a, b) >= 0.3;
+}
+
+/**
+ * 일정·장소가 바뀌었는지. 장소는 표기만 다른 경우를 변경으로 보지 않는다(sameVenueName).
+ * 값이 없어지는 변경(→ 미정)은 알리지 않는다.
+ */
+export function notableChanges(before: Pick<EventRow, 'startDate' | 'endDate' | 'venue'>, after: Pick<EventRow, 'startDate' | 'endDate' | 'venue'>): NotableChange[] {
+  const out: NotableChange[] = [];
+  const a = period(before);
+  const b = period(after);
+  if (b && a !== b) out.push({ field: 'dates', from: a, to: b });
+  if (after.venue && (!before.venue || !sameVenueName(before.venue, after.venue))) {
+    out.push({ field: 'venue', from: before.venue, to: after.venue });
+  }
+  return out;
+}
+
 const addDays = (ymd: string, n: number) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 
 /** 두 기간이 겹치는지 (slack일 여유). 한쪽이라도 시작일이 없으면 false */
@@ -110,9 +175,11 @@ export const MATCH_CANDIDATE_LIMIT = 6;
 /** 같은 행사로 확정하는 확신도. 이보다 낮은 same은 중복 의심으로 관리자에게 묻는다 */
 export const MATCH_CONFIRM = 0.8;
 export const MATCH_SUSPECT = 0.5;
+/** 기간이 안 겹쳐도 후보로 넣는 제목 유사도 (일정 변경·연기 확인용) */
+export const RESCHEDULE_SIM = 0.75;
 
 /**
- * 제목으로는 못 찾았을 때 Claude에게 물어볼 후보: 기간이 겹치거나(하루 여유) 한쪽 일정이 미정이면서,
+ * 제목으로는 못 찾았을 때 Claude에게 물어볼 후보: 기간이 겹치거나(하루 여유) 한쪽 일정이 미정이거나 제목이 거의 같으면서(일정 변경),
  * 지역이 같거나 장소가 같은 행사. 언어가 다른 제목은 글자가 안 겹치므로 제목 유사도를 조건으로 쓰지 않고 순서에만 쓴다.
  */
 export async function findMatchCandidates(db: Db, ext: Extraction): Promise<EventRow[]> {
@@ -128,7 +195,9 @@ export async function findMatchCandidates(db: Db, ext: Extraction): Promise<Even
     if (c.region !== ext.region && !sameVenue) continue;
     const sim = bestTitleSimilarity(c, ext.title);
     const undated = !ext.start_date || !c.startDate;
-    if (undated ? !(sameVenue || sim >= 0.2) : !periodsOverlap(ext.start_date, ext.end_date, c.startDate, c.endDate, 1)) continue;
+    // 일정이 연기·변경된 행사: 기간은 안 겹치지만 제목이 거의 같고 시작일이 넉 달 안쪽
+    const rescheduled = !undated && sim >= RESCHEDULE_SIM && Math.abs(Date.parse(ext.start_date!) - Date.parse(c.startDate!)) <= 120 * 86_400_000;
+    if (undated ? !(sameVenue || sim >= 0.2) : !periodsOverlap(ext.start_date, ext.end_date, c.startDate, c.endDate, 1) && !rescheduled) continue;
     const score = sim * 3 + (sameVenue ? 2 : 0) + (c.kind === ext.kind ? 1 : 0) + (!!ext.start_date && c.startDate === ext.start_date ? 1 : 0);
     scored.push({ e: c, score });
   }
@@ -171,6 +240,8 @@ export interface MergeResult {
   statusChanged: boolean;
   /** 확신이 높은 출처가 확인해 검수 대기가 풀렸으면 true (새 행사처럼 알린다) */
   reviewCleared?: boolean;
+  /** 기존 행사의 일정·장소가 바뀌었으면 그 내용 */
+  changes?: NotableChange[];
 }
 
 const UPDATABLE = ['city', 'venue', 'startDate', 'endDate', 'ticketOpenAt', 'ticketUrl'] as const;
@@ -223,6 +294,7 @@ export async function mergeExtraction(db: Db, ext: Extraction, ctx: MergeContext
         // 중복 의심이면 공지하지 않고 관리자에게 [합치기]·[별개 행사]를 묻는다
         needsReview: ctx.needsReview || dupOfId ? 1 : 0,
         dupOfId,
+        presales: JSON.stringify(ext.presales ?? []),
         createdAt: nowIso,
         updatedAt: nowIso,
       })
@@ -235,8 +307,16 @@ export async function mergeExtraction(db: Db, ext: Extraction, ctx: MergeContext
   // 기존 행사 갱신: 새 값이 있고 다르면 덮어쓴다 (나중 정보가 더 정확하다고 본다)
   const changed: Record<string, [unknown, unknown]> = {};
   const updates: Partial<EventRow> = {};
+  // 여러 날 행사의 하루만 적은 출처(둘째 날 공연 안내 등)가 기간을 줄이지 않게, 기존 기간 안에 들어가는 일정은 덮어쓰지 않는다
+  const exEnd = existing.endDate ?? existing.startDate;
+  const inEnd = incoming.endDate ?? incoming.startDate;
+  const withinExisting =
+    !!existing.startDate && !!incoming.startDate && incoming.startDate >= existing.startDate && inEnd! <= exEnd! && !(incoming.startDate === existing.startDate && inEnd === exEnd);
   for (const f of UPDATABLE) {
     const v = incoming[f];
+    if (withinExisting && (f === 'startDate' || f === 'endDate')) continue;
+    // 같은 장소의 다른 언어 표기로는 바꾸지 않는다 (출처마다 표기가 달라 왔다 갔다 하는 것을 막는다)
+    if (f === 'venue' && existing.venue && typeof v === 'string' && script(existing.venue) !== script(v)) continue;
     if (v !== null && v !== undefined && v !== existing[f]) {
       // 예매처 링크는 예매처 링크로만 바꾼다
       if (f === 'ticketUrl' && !mayReplaceLink(existing.ticketUrl, v)) continue;
@@ -256,6 +336,10 @@ export async function mergeExtraction(db: Db, ext: Extraction, ctx: MergeContext
   }
   if (!existing.summaryKo && ext.summary_ko) updates.summaryKo = ext.summary_ko;
   // 확신이 높은 출처가 확인해 주면 검수 대기를 푼다
+  if (ext.presales?.length) {
+    const next = JSON.stringify(mergePresales(parsePresales(existing.presales), ext.presales));
+    if (next !== existing.presales) (updates.presales = next), (changed.presales = [existing.presales, next]);
+  }
   // (중복 의심으로 대기 중인 행사는 관리자가 정할 때까지 풀지 않는다)
   if (existing.needsReview === 1 && !ctx.needsReview && existing.dupOfId == null) (updates.needsReview = 0), (changed.needsReview = [1, 0]);
   if (existing.parentEventId === null && ext.parent_event_hint) {
@@ -294,7 +378,14 @@ export async function mergeExtraction(db: Db, ext: Extraction, ctx: MergeContext
   }
   await linkSource(db, existing.id, ext, ctx);
   const [event] = await db.select().from(events).where(eq(events.id, existing.id));
-  return { event: event!, created: false, statusFrom: existing.status, statusChanged, reviewCleared: updates.needsReview === 0 };
+  return {
+    event: event!,
+    created: false,
+    statusFrom: existing.status,
+    statusChanged,
+    reviewCleared: updates.needsReview === 0,
+    changes: notableChanges(existing, event!),
+  };
 }
 
 async function linkSource(db: Db, eventId: number, ext: Extraction, ctx: MergeContext) {
