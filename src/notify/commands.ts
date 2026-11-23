@@ -115,6 +115,7 @@ export const commandDefinitions = [
           o.setName('동작').setDescription('할 일').setRequired(true).addChoices({ name: '일시정지', value: 'pause' }, { name: '재개', value: 'resume' }, { name: '상태', value: 'status' }),
         ),
     )
+    .addSubcommand((s) => s.setName('패널').setDescription('관리 패널(상태판 + 버튼)을 지금 이 자리에서 열기. 나에게만 보여요'))
     .addSubcommand((s) => s.setName('중복검사').setDescription('이미 등록된 행사 중 같은 행사가 있는지 Claude로 검사 (의심되는 쌍은 관리자 채널 카드로)'))
     .addSubcommand((s) => s.setName('달력').setDescription('이번 달 행사 달력 그림을 공지 채널에 지금 올리기'))
     .addSubcommand((s) => s.setName('설정').setDescription('알림 역할·구독 패널·상태판을 지금 다시 맞추고 권한을 점검'))

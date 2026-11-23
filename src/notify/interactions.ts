@@ -226,6 +226,9 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
         const action = ctx.getString('동작');
         return ops.notify(action === 'pause' || action === 'resume' ? action : 'status');
       }
+      case '패널':
+        // 고정 메시지를 찾아 올라가지 않아도 되게, 친 자리에서 나에게만 보이는 패널을 연다
+        return ops.board();
       case '중복검사':
         return ops.dupSweep();
       case '달력':

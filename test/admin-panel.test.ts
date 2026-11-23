@@ -178,5 +178,9 @@ describe('관리 패널', () => {
     expect(await h.onButton!('ad:cal', admin)).toEqual({ reply: '🗓️ 올렸어요' });
     expect(await h.onButton!('ad:setup', admin)).toEqual({ reply: expect.stringContaining('1명에게 줬어요') });
     expect(text(await h.onButton!('ad:diag', admin))).toContain('행사 현황');
+    // /관리 패널: 친 자리에서 같은 패널을 연다
+    const ctx = (isAdmin: boolean) => ({ ...(isAdmin ? admin : user), wsPingMs: 0, subcommand: '패널', getString: () => null });
+    expect(ids((await h.onCommand('관리', ctx(true))) as ButtonResult)).toContain('ad:src');
+    expect(await h.onCommand('관리', ctx(false))).toContain('관리자');
   });
 });
