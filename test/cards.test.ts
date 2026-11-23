@@ -22,7 +22,7 @@ const ev = (over: Partial<EventRow> = {}): EventRow => ({
   summaryKo: '서울에서 미쿠 엑스포가 열린다.',
   dedupKey: 'k',
   needsReview: 0,
-  mergedInto: null,
+  mergedInto: null, aliases: '[]', dupOfId: null,
   createdAt: '',
   updatedAt: '',
   ...over,
@@ -66,7 +66,7 @@ describe('공지 카드', () => {
     expect(nodes[0]!.type).toBe(17);
     expect(nodes[0]!.accent_color).toBe(0xff6b35);
     const text = nodes.map((n) => n.content ?? '').join('\n');
-    expect(text).toContain('-# ⏰ 티켓 오픈 1시간 전　·　🇰🇷 국내 · 공연 · 크립톤 공식');
+    expect(text).toContain('-# ⏰ 티켓 오픈 1시간 전　·　🇰🇷 국내 · 🎤 공연 · 크립톤 공식');
     expect(text).toContain('## [HATSUNE MIKU EXPO 2027 KOREA](https://ticket.melon.com/performance/index.htm?prodId=1)');
     expect(text).toContain('> 서울에서 미쿠 엑스포가 열린다.');
     expect(text).toContain('🎫 **티켓 오픈**　2026.12.01(화) 20:00 KST · <t:1796122800:R>');
@@ -168,6 +168,7 @@ describe('목록 카드', () => {
 
   it('/점검 카드', () => {
     const card = diagnosticsCard({
+      kinds: [{ kind: 'concert', upcoming: 2 }],
       regions: [
         { region: 'KR', upcoming: 0, ended: 1, cancelled: 0, needsReview: 0 },
         { region: 'JP', upcoming: 2, ended: 0, cancelled: 0, needsReview: 1 },

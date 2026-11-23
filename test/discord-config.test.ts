@@ -83,7 +83,7 @@ describe('명령 응답 (임베드 + 고정폭 표)', async () => {
     expect(desc(r)).toContain('11-22 23:05  강  완료  멜론티켓 · 하츠네 미쿠 EXPO');
     const ev = buildEventsReply(
       [
-        { id: 1, title: 'HATSUNE MIKU EXPO 2027 KOREA', kind: 'concert', officiality: 'crypton', region: 'KR', city: '서울', venue: '올림픽홀', startDate: '2027-03-06', endDate: '2027-03-07', ticketOpenAt: '2026-12-01T11:00:00.000Z', ticketUrl: null, status: 'ticket_scheduled', parentEventId: null, summaryKo: null, dedupKey: 'k', needsReview: 0, mergedInto: null, createdAt: '', updatedAt: '' },
+        { id: 1, title: 'HATSUNE MIKU EXPO 2027 KOREA', kind: 'concert', officiality: 'crypton', region: 'KR', city: '서울', venue: '올림픽홀', startDate: '2027-03-06', endDate: '2027-03-07', ticketOpenAt: '2026-12-01T11:00:00.000Z', ticketUrl: null, status: 'ticket_scheduled', parentEventId: null, summaryKo: null, dedupKey: 'k', needsReview: 0, mergedInto: null, aliases: '[]', dupOfId: null, createdAt: '', updatedAt: '' },
       ],
       'domestic',
     );

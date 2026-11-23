@@ -11,6 +11,7 @@ import { createWebhookSender } from './notify/webhook.js';
 import { createNotifier, dedupAlerter } from './notify/notifier.js';
 import { listUpcomingEvents } from './services/events.js';
 import { isNotifyPaused } from './services/settings.js';
+import { cleanupActionLinks } from './pipeline/merge.js';
 import { createDiscordJobs } from './notify/discordJobs.js';
 import { createInteractionHandlers } from './notify/interactions.js';
 import { deliverNotice } from './notify/noticeThreads.js';
@@ -29,6 +30,9 @@ const { client, db } = await openDb({ url: config.DATABASE_URL, authToken: confi
 await runMigrations(db);
 const seeded = await seedDatabase(db);
 const interrupted = await closeInterruptedRuns(db);
+// 링크 검사 도입 전에 저장된 블로그·기사 주소를 행동 링크에서 뺀다
+const clearedLinks = await cleanupActionLinks(db);
+if (clearedLinks > 0) console.log(`행동 링크 정리: ${clearedLinks}건 (소개 글·기사 주소 제거)`);
 const resetSkipped = await resetSkippedSources(db);
 console.log(
   `DB 준비 완료: 소스 추가 ${seeded.sourcesInserted}, 갱신 ${seeded.sourcesUpdated}, 키워드 ${seeded.keywordsUpserted}` +

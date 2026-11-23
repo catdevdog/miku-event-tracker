@@ -179,10 +179,10 @@ describe('알림 (규칙 7)', () => {
     expect(embed.url).toBe('https://ticket.melon.com/x');
     expect(embed.description).toContain('📅 **일정**　2027.03.06(토) ~ 03.07(일)');
     expect(embed.description).toContain('📍 **장소**　서울 · 올림픽홀');
-    expect(embed.description).toContain('🎫 **티켓 오픈**　2026.12.01(화) 20:00 KST (<t:1796122800:R>)');
-    expect(embed.description).toContain('🇰🇷 국내 · 공연 · 크립톤 공식');
+    expect(embed.description).toContain('🎫 **티켓 오픈**　2026.12.01(화) 20:00 KST · <t:1796122800:R>');
+    expect(embed.description).toContain('🇰🇷 국내 · 🎤 공연 · 크립톤 공식');
     expect(embed.fields).toEqual([
-      { name: '예매', value: '[예매 페이지 열기](https://ticket.melon.com/x)', inline: true },
+      { name: '바로가기', value: '[🎫 예매하기](https://ticket.melon.com/x)', inline: true },
       { name: '출처', value: '[x.com](https://x.com/cfm_miku/status/1)', inline: true },
     ]);
     expect(embed.image?.url).toBe('https://raw.githubusercontent.com/catdevdog/miku-event-tracker/main/assets/region-kr.png');

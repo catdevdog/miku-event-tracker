@@ -29,6 +29,13 @@
       "when": 1795368253128,
       "tag": "0003_discord_features",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1795404133126,
+      "tag": "0004_kinds_dedup",
+      "breakpoints": true
     }
   ]
 }

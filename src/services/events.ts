@@ -18,7 +18,7 @@ export function parseEventScope(v: string | null | undefined): EventScope {
  * 다가오는(또는 진행 중인) 확정 행사. 슬래시 명령, 추후 멘션 질의·공개 웹이 같이 쓴다.
  * 검수 대기·종료·취소는 뺀다. 시작일 미정은 뒤로.
  */
-export async function listUpcomingEvents(db: Db, opts: { scope?: EventScope; limit?: number } = {}) {
+export async function listUpcomingEvents(db: Db, opts: { scope?: EventScope; limit?: number; kinds?: readonly string[] } = {}) {
   const region = SCOPE_REGION[opts.scope ?? 'all'];
   return db
     .select()
@@ -28,6 +28,7 @@ export async function listUpcomingEvents(db: Db, opts: { scope?: EventScope; lim
         eq(events.needsReview, 0),
         sql`${events.status} NOT IN ('ended','cancelled')`,
         region ? eq(events.region, region) : undefined,
+        opts.kinds?.length ? inArray(events.kind, opts.kinds as (typeof events.$inferSelect)['kind'][]) : undefined,
       ),
     )
     .orderBy(sql`${events.startDate} IS NULL`, asc(events.startDate), asc(events.id))

@@ -18,13 +18,15 @@ import {
   parseEventEdit,
   removeKeyword,
   setEventHidden,
+  setEventKind,
+  type EventKind,
   sourceAction,
   sourceChoices,
   type KeywordTier,
   type SourceAction,
 } from '../services/admin.js';
 import { SETTING, deleteSetting, isNotifyPaused, setSetting } from '../services/settings.js';
-import { KEYWORD_TIERS } from '../db/schema.js';
+import { EVENT_KINDS, KEYWORD_TIERS } from '../db/schema.js';
 import { buildDiagnosticsReply, buildEventsReply, buildPingReply, buildRecentReply, buildSourcesReply } from './commands.js';
 import { buildGuideReply } from './guide.js';
 import { EVENTS_PAGE_SIZE, eventDetailCard, parseEventsPageId, searchResultsCard } from './cards.js';
@@ -32,7 +34,8 @@ import { decideReview, parseReviewId } from './review.js';
 import { parseSubId, toggleSubscription } from './subscriptions.js';
 import { parseWatchId, toggleWatch } from './watchers.js';
 import { createReport, firstUrl, postReportCard } from './reports.js';
-import { noticeThreadUrl, refreshNoticeCard, type NoticeDeliveryDeps } from './noticeThreads.js';
+import { noticeThreadUrl, refreshNoticeCard, removeNotice, type NoticeDeliveryDeps } from './noticeThreads.js';
+import { KIND_GROUPS, kindLabel, parseKindGroup, type KindGroup } from './labels.js';
 import { planForChange } from './planner.js';
 import type { ButtonResult, CommandContext, CommandResult, DiscordBot, DiscordBotOptions, InteractionCtx, Reply } from './discord.js';
 import type { Notifier } from './notifier.js';
@@ -62,11 +65,11 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
   const noticeDeps = (): NoticeDeliveryDeps => ({ db, notifier: deps.notifier, noticeChannelId: deps.noticeChannelId, bot: deps.bot() });
 
   /** /행사 한 페이지. 카드 버튼 링크(예매·원문)는 그 페이지 행사만 조회한다. */
-  const eventsPage = async (scope: EventScope, page: number) => {
-    const rows = await listUpcomingEvents(db, { scope, limit: 200 });
+  const eventsPage = async (scope: EventScope, page: number, kind?: KindGroup) => {
+    const rows = await listUpcomingEvents(db, { scope, limit: 200, kinds: kind ? KIND_GROUPS[kind].kinds : undefined });
     const p = Math.min(Math.max(0, page), Math.max(0, Math.ceil(rows.length / EVENTS_PAGE_SIZE) - 1));
     const links = await eventLinks(db, rows.slice(p * EVENTS_PAGE_SIZE, (p + 1) * EVENTS_PAGE_SIZE));
-    return buildEventsReply(rows, scope, p, links);
+    return buildEventsReply(rows, scope, p, links, kind);
   };
 
   const detail = async (id: number, opts: { admin?: boolean } = {}): Promise<Reply> => {
@@ -139,6 +142,13 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
             },
           };
         }
+        if (action === 'kind') {
+          const kind = ctx.getString('유형');
+          if (!kind || !(EVENT_KINDS as readonly string[]).includes(kind)) return '`유형` 옵션에서 바꿀 유형을 골라 주세요.';
+          const updated = await setEventKind(db, e.id, kind as EventKind, ctx.userId, now());
+          if (updated) await refreshNoticeCard(noticeDeps(), updated).catch(() => false);
+          return `🏷️ #${e.id} **${e.title}** 유형: ${kindLabel(e.kind)} → ${kindLabel(kind)}`;
+        }
         const hidden = action === 'hide';
         await setEventHidden(db, e.id, hidden, now());
         return hidden
@@ -149,7 +159,13 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
         const keep = await resolveEventId(ctx.getString('남길행사'));
         const absorb = await resolveEventId(ctx.getString('합칠행사'));
         if (!keep || !absorb) return '행사를 찾을 수 없어요. 입력 중에 뜨는 목록에서 골라 주세요.';
-        return mergeEvents(db, keep, absorb, ctx.userId, now());
+        const text = await mergeEvents(db, keep, absorb, ctx.userId, now());
+        if (!text.startsWith('🔗')) return text;
+        // 흡수한 행사의 공지는 지우고, 남긴 행사의 공지 카드는 채워진 내용으로 고친다
+        const removed = await removeNotice(noticeDeps(), absorb, keep, deps.guildId).catch(() => false);
+        const kept = await getEvent(db, keep);
+        if (kept) await refreshNoticeCard(noticeDeps(), kept).catch(() => false);
+        return `${text}${removed ? '\n중복 공지는 지웠어요.' : ''}`;
       }
       case '알림': {
         const action = ctx.getString('동작');
@@ -185,7 +201,7 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
           return buildRecentReply(await listRecentRawItems(db, 15));
         case '행사': {
           const q = ctx.getString('검색');
-          return q ? search(q) : eventsPage(parseEventScope(ctx.getString('범위')), 0);
+          return q ? search(q) : eventsPage(parseEventScope(ctx.getString('범위')), 0, parseKindGroup(ctx.getString('유형')));
         }
         case '점검':
           return buildDiagnosticsReply(await getDiagnostics(db));
@@ -215,7 +231,7 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
 
     async onButton(customId, ctx): Promise<ButtonResult> {
       const page = parseEventsPageId(customId);
-      if (page) return eventsPage(parseEventScope(page.scope), page.page);
+      if (page) return eventsPage(parseEventScope(page.scope), page.page, parseKindGroup(page.kind));
       const review = parseReviewId(customId);
       if (review) {
         if (!ctx.isAdmin) return { reply: ADMIN_ONLY };

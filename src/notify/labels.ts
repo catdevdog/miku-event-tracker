@@ -2,8 +2,44 @@
 
 export const KIND_KO: Record<string, string> = {
   concert: '공연', booth: '부스', stage: '무대', popup: '팝업', cafe: '콜라보 카페',
-  exhibition: '전시', live_viewing: '라이브뷰잉', goods: '굿즈', other: '기타',
+  exhibition: '전시', live_viewing: '상영·라이브뷰잉', goods: '굿즈', collab: '콜라보', other: '기타',
 };
+
+export const KIND_ICON: Record<string, string> = {
+  concert: '🎤', booth: '🎪', stage: '🎪', popup: '🏪', cafe: '☕',
+  exhibition: '🖼️', live_viewing: '🎬', goods: '🛍️', collab: '🤝', other: '📌',
+};
+
+/** "🎤 공연" */
+export const kindLabel = (kind: string) => `${KIND_ICON[kind] ?? '📌'} ${KIND_KO[kind] ?? kind}`;
+
+/** /행사 유형 필터 묶음 */
+export const KIND_GROUPS = {
+  concert: { label: '🎤 공연', kinds: ['concert'] },
+  fest: { label: '🎪 부스·무대', kinds: ['booth', 'stage'] },
+  shop: { label: '🏪 팝업·카페·전시', kinds: ['popup', 'cafe', 'exhibition'] },
+  screen: { label: '🎬 상영·라이브뷰잉', kinds: ['live_viewing'] },
+  goods: { label: '🛍️ 굿즈·콜라보', kinds: ['goods', 'collab'] },
+} as const;
+export type KindGroup = keyof typeof KIND_GROUPS;
+export const parseKindGroup = (v: string | null | undefined): KindGroup | undefined => (v && v in KIND_GROUPS ? (v as KindGroup) : undefined);
+
+/** 좌석 예매가 있는 유형. 그 외 유형은 티켓 줄을 일정이 있을 때만 보여 준다 */
+export const TICKETED_KINDS = new Set(['concert', 'live_viewing', 'stage']);
+
+/** 일정 줄 이름: 굿즈는 발매, 팝업·카페·전시·콜라보는 기간 */
+export const dateLabel = (kind: string) => (kind === 'goods' ? '발매' : ['popup', 'cafe', 'exhibition', 'collab'].includes(kind) ? '기간' : '일정');
+
+/**
+ * 행동 링크(events.ticket_url) 버튼 문구. 예매처 링크이거나 예매가 있는 유형이면 예매하기,
+ * 굿즈·콜라보는 판매처, 팝업·카페·전시는 예약·안내, 나머지는 공식 페이지.
+ */
+export function actionLabel(kind: string, isTicketSite: boolean, short = false): string {
+  if (isTicketSite || kind === 'concert' || kind === 'live_viewing') return short ? '🎫 예매' : '🎫 예매하기';
+  if (kind === 'goods' || kind === 'collab') return short ? '🛍️ 판매처' : '🛍️ 판매처 보기';
+  if (kind === 'popup' || kind === 'cafe' || kind === 'exhibition') return short ? '📝 예약·안내' : '📝 예약·안내 보기';
+  return short ? '🔗 공식' : '🔗 공식 페이지';
+}
 
 export const OFFICIALITY_KO: Record<string, string> = {
   crypton: '크립톤 공식', licensed: '공식 라이선스', permitted_doujin: '허가 동인', unverified: '미확인',

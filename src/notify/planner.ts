@@ -5,8 +5,8 @@ import type { EventRow } from '../pipeline/merge.js';
 import type { EventStatus } from '../pipeline/state.js';
 import type { OutgoingMessage } from './types.js';
 import { discordTime, formatKstShort, formatPeriodKo } from './format.js';
-import { KIND_KO, OFFICIALITY_KO, REGION_IMAGES, STATUS_KO } from './labels.js';
-import { noticeCard } from './cards.js';
+import { KIND_KO, OFFICIALITY_KO, REGION_IMAGES, STATUS_KO, kindLabel } from './labels.js';
+import { actionButtonLabel, detailLines, noticeCard } from './cards.js';
 import { isWatchFilter } from './watchers.js';
 
 export type NotifyReason = 'new' | 'status_change' | 'reminder';
@@ -39,22 +39,12 @@ function sourceLink(url: string): string {
 export function renderEventMessage(e: EventRow, reason: NotifyReason, slot = '', sourceUrls: string[] = []): OutgoingMessage {
   const { label, icon, color } = headline(reason, e.status, slot);
   const links = [...new Set(sourceUrls)].slice(0, 3);
-  const place = [e.city, e.venue].filter(Boolean).join(' · ') || '미정';
-  const ticket = e.ticketOpenAt
-    ? `${formatKstShort(e.ticketOpenAt)} KST (${discordTime(e.ticketOpenAt, 'R')})`
-    : '미정';
-
-  const lines = [
-    `📅 **일정**　${formatPeriodKo(e.startDate, e.endDate)}`,
-    `📍 **장소**　${place}`,
-    `🎫 **티켓 오픈**　${ticket}`,
-    `🏷️ **구분**　${REGION_FLAG[e.region] ?? e.region} · ${KIND_KO[e.kind] ?? e.kind} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}`,
-  ];
+  const lines = [...detailLines(e), `🏷️ **구분**　${REGION_FLAG[e.region] ?? e.region} · ${kindLabel(e.kind)} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}`];
   const summary = (e.summaryKo ?? '').trim();
   const description = [summary, summary ? '' : null, ...lines].filter((l) => l !== null).join('\n').slice(0, 4000);
 
   const fields: { name: string; value: string; inline?: boolean }[] = [];
-  if (e.ticketUrl) fields.push({ name: '예매', value: `[예매 페이지 열기](${e.ticketUrl})`.slice(0, 1024), inline: true });
+  if (e.ticketUrl) fields.push({ name: '바로가기', value: `[${actionButtonLabel(e, e.ticketUrl)}](${e.ticketUrl})`.slice(0, 1024), inline: true });
   if (links.length) fields.push({ name: '출처', value: links.map(sourceLink).join('\n').slice(0, 1024), inline: true });
 
   const image = REGION_IMAGES[e.region];

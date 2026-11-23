@@ -1,7 +1,8 @@
 import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { eventSources, eventStateLog, events } from '../db/schema.js';
-import type { Extraction } from './extract.js';
+import type { Extraction, MatchCandidate, MatchResult } from './extract.js';
+import { actionUrl, mayReplaceLink } from './links.js';
 import { deriveStatus, nextStatus, type EventStatus } from './state.js';
 
 export type EventRow = typeof events.$inferSelect;
@@ -51,29 +52,92 @@ export async function followMerged(db: Db, e: EventRow | undefined): Promise<Eve
   return e;
 }
 
+/** events.aliases (JSON 배열) */
+export function parseAliases(json: string | null | undefined): string[] {
+  try {
+    const v = JSON.parse(json ?? '[]') as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 제목과 다른 표기(별칭) 중 가장 비슷한 것의 유사도 */
+export function bestTitleSimilarity(e: Pick<EventRow, 'title' | 'aliases'>, title: string): number {
+  return Math.max(titleSimilarity(e.title, title), ...parseAliases(e.aliases).map((a) => titleSimilarity(a, title)));
+}
+
+const addDays = (ymd: string, n: number) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+
+/** 두 기간이 겹치는지 (slack일 여유). 한쪽이라도 시작일이 없으면 false */
+export function periodsOverlap(aStart: string | null, aEnd: string | null, bStart: string | null, bEnd: string | null, slack = 0): boolean {
+  if (!aStart || !bStart) return false;
+  return aStart <= addDays(bEnd ?? bStart, slack) && bStart <= addDays(aEnd ?? aStart, slack);
+}
+
+const sameVenueAs = (ext: Extraction, c: Pick<EventRow, 'venue'>) => !!ext.venue && normalizeKey(c.venue) !== '' && normalizeKey(c.venue) === normalizeKey(ext.venue);
+
 async function findEventRow(db: Db, ext: Extraction): Promise<EventRow | undefined> {
   const key = dedupKey(ext.title, ext.start_date, ext.venue);
   const [exact] = await db.select().from(events).where(eq(events.dedupKey, key)).limit(1);
   if (exact) return exact;
 
-  const dateCond = ext.start_date ? or(eq(events.startDate, ext.start_date), isNull(events.startDate)) : undefined;
+  // 같은 지역, 또는 지역이 다르게 뽑혔어도 시작일이 같은 행사(장소로 확인)
   const candidates = await db
     .select()
     .from(events)
-    .where(and(eq(events.region, ext.region), dateCond))
+    .where(ext.start_date ? or(eq(events.region, ext.region), eq(events.startDate, ext.start_date)) : eq(events.region, ext.region))
     .orderBy(desc(events.updatedAt))
-    .limit(300);
+    .limit(400);
 
   let best: { e: EventRow; sim: number } | undefined;
   for (const c of candidates) {
-    const sim = titleSimilarity(c.title, ext.title);
+    const sim = bestTitleSimilarity(c, ext.title);
+    const sameRegion = c.region === ext.region;
     const sameDate = !!ext.start_date && c.startDate === ext.start_date;
-    const sameVenue = !!ext.venue && normalizeKey(c.venue) === normalizeKey(ext.venue) && normalizeKey(c.venue) !== '';
-    const ok = sameDate ? (sameVenue && sim >= 0.3) || sim >= 0.5 : sim >= 0.6;
+    const sameVenue = sameVenueAs(ext, c);
+    let ok: boolean;
+    if (!sameRegion) ok = sameDate && sameVenue && sim >= 0.5; // 지역만 다르게 뽑힌 경우
+    else if (sameDate) ok = (sameVenue && sim >= 0.3) || sim >= 0.5;
+    else if (!ext.start_date || !c.startDate) ok = sim >= 0.6; // 한쪽 일정 미정
+    else ok = periodsOverlap(ext.start_date, ext.end_date, c.startDate, c.endDate) && sim >= 0.6; // 시작일이 다르게 뽑혔지만 기간이 겹침
     if (ok && (!best || sim > best.sim)) best = { e: c, sim };
   }
   return best?.e;
 }
+
+export const MATCH_CANDIDATE_LIMIT = 6;
+/** 같은 행사로 확정하는 확신도. 이보다 낮은 same은 중복 의심으로 관리자에게 묻는다 */
+export const MATCH_CONFIRM = 0.8;
+export const MATCH_SUSPECT = 0.5;
+
+/**
+ * 제목으로는 못 찾았을 때 Claude에게 물어볼 후보: 기간이 겹치거나(하루 여유) 한쪽 일정이 미정이면서,
+ * 지역이 같거나 장소가 같은 행사. 언어가 다른 제목은 글자가 안 겹치므로 제목 유사도를 조건으로 쓰지 않고 순서에만 쓴다.
+ */
+export async function findMatchCandidates(db: Db, ext: Extraction): Promise<EventRow[]> {
+  const rows = await db
+    .select()
+    .from(events)
+    .where(and(isNull(events.mergedInto), sql`${events.needsReview} <> 2`))
+    .orderBy(desc(events.updatedAt))
+    .limit(500);
+  const scored: { e: EventRow; score: number }[] = [];
+  for (const c of rows) {
+    const sameVenue = sameVenueAs(ext, c);
+    if (c.region !== ext.region && !sameVenue) continue;
+    const sim = bestTitleSimilarity(c, ext.title);
+    const undated = !ext.start_date || !c.startDate;
+    if (undated ? !(sameVenue || sim >= 0.2) : !periodsOverlap(ext.start_date, ext.end_date, c.startDate, c.endDate, 1)) continue;
+    const score = sim * 3 + (sameVenue ? 2 : 0) + (c.kind === ext.kind ? 1 : 0) + (!!ext.start_date && c.startDate === ext.start_date ? 1 : 0);
+    scored.push({ e: c, score });
+  }
+  return scored.sort((a, b) => b.score - a.score).slice(0, MATCH_CANDIDATE_LIMIT).map((s) => s.e);
+}
+
+export const toMatchCandidate = (e: EventRow): MatchCandidate => ({
+  id: e.id, title: e.title, aliases: parseAliases(e.aliases), kind: e.kind, region: e.region, city: e.city, venue: e.venue, startDate: e.startDate, endDate: e.endDate,
+});
 
 async function findParent(db: Db, hint: string | null, selfId?: number): Promise<number | null> {
   if (!hint) return null;
@@ -93,6 +157,10 @@ export interface MergeContext {
   needsReview: boolean;
   fromKopis: boolean;
   now: Date;
+  /** 원문 주소·어댑터 (행동 링크 검사용) */
+  item?: { url?: string | null; adapter?: string };
+  /** 새 행사를 만들기 직전에 같은 행사인지 Claude에게 묻는다 (없으면 묻지 않음) */
+  matcher?: (ext: Extraction, candidates: MatchCandidate[]) => Promise<MatchResult>;
 }
 
 export interface MergeResult {
@@ -116,9 +184,24 @@ export async function mergeExtraction(db: Db, ext: Extraction, ctx: MergeContext
     startDate: ext.start_date,
     endDate: ext.end_date ?? ext.start_date,
     ticketOpenAt: ext.ticket_open_at,
-    ticketUrl: ext.ticket_url,
+    // 소개 글·기사·SNS 주소, 원문 자체 주소는 행동 링크로 쓰지 않는다
+    ticketUrl: actionUrl(ext.ticket_url, ctx.item),
   };
-  const existing = await findExistingEvent(db, ext);
+  let existing = await findExistingEvent(db, ext);
+
+  // 제목으로 못 찾았으면(언어가 다른 제목, 일정이 다르게 뽑힌 경우) 기간이 겹치는 행사 중에 같은 행사가 있는지 묻는다
+  let dupOfId: number | null = null;
+  let parentFromMatch: number | null = null;
+  if (!existing && ctx.matcher) {
+    const candidates = await findMatchCandidates(db, ext);
+    if (candidates.length > 0) {
+      const m = await ctx.matcher(ext, candidates.map(toMatchCandidate));
+      const hit = candidates.find((c) => c.id === m.matchId);
+      if (hit && m.relation === 'same' && m.confidence >= MATCH_CONFIRM) existing = hit;
+      else if (hit && m.relation === 'same' && m.confidence >= MATCH_SUSPECT) dupOfId = hit.id;
+      else if (hit && m.relation === 'part_of' && (ext.kind === 'booth' || ext.kind === 'stage' || ext.parent_event_hint)) parentFromMatch = hit.id;
+    }
+  }
 
   if (!existing) {
     const status = deriveStatus(
@@ -134,10 +217,12 @@ export async function mergeExtraction(db: Db, ext: Extraction, ctx: MergeContext
         region: ext.region,
         ...incoming,
         status,
-        parentEventId: await findParent(db, ext.parent_event_hint),
+        parentEventId: (await findParent(db, ext.parent_event_hint)) ?? parentFromMatch,
         summaryKo: ext.summary_ko,
         dedupKey: dedupKey(ext.title, ext.start_date, ext.venue),
-        needsReview: ctx.needsReview ? 1 : 0,
+        // 중복 의심이면 공지하지 않고 관리자에게 [합치기]·[별개 행사]를 묻는다
+        needsReview: ctx.needsReview || dupOfId ? 1 : 0,
+        dupOfId,
         createdAt: nowIso,
         updatedAt: nowIso,
       })
@@ -153,9 +238,16 @@ export async function mergeExtraction(db: Db, ext: Extraction, ctx: MergeContext
   for (const f of UPDATABLE) {
     const v = incoming[f];
     if (v !== null && v !== undefined && v !== existing[f]) {
+      // 예매처 링크는 예매처 링크로만 바꾼다
+      if (f === 'ticketUrl' && !mayReplaceLink(existing.ticketUrl, v)) continue;
       changed[f] = [existing[f], v];
       updates[f] = v;
     }
+  }
+  // 다른 출처의 제목 표기를 별칭으로 남긴다 (다음 비교에 쓴다)
+  const known = [existing.title, ...parseAliases(existing.aliases)];
+  if (!known.some((t) => normalizeKey(t) === normalizeKey(ext.title)) && known.length <= 12) {
+    updates.aliases = JSON.stringify([...known.slice(1), ext.title]);
   }
   if (existing.kind === 'other' && ext.kind !== 'other') (updates.kind = ext.kind), (changed.kind = [existing.kind, ext.kind]);
   if (existing.officiality === 'unverified' && ext.officiality !== 'unverified') {
@@ -164,7 +256,8 @@ export async function mergeExtraction(db: Db, ext: Extraction, ctx: MergeContext
   }
   if (!existing.summaryKo && ext.summary_ko) updates.summaryKo = ext.summary_ko;
   // 확신이 높은 출처가 확인해 주면 검수 대기를 푼다
-  if (existing.needsReview === 1 && !ctx.needsReview) (updates.needsReview = 0), (changed.needsReview = [1, 0]);
+  // (중복 의심으로 대기 중인 행사는 관리자가 정할 때까지 풀지 않는다)
+  if (existing.needsReview === 1 && !ctx.needsReview && existing.dupOfId == null) (updates.needsReview = 0), (changed.needsReview = [1, 0]);
   if (existing.parentEventId === null && ext.parent_event_hint) {
     const parent = await findParent(db, ext.parent_event_hint, existing.id);
     if (parent) updates.parentEventId = parent;
@@ -224,4 +317,27 @@ export async function sweepStatuses(db: Db, now: Date): Promise<{ event: EventRo
     changed.push({ event: { ...e, status: next, updatedAt: nowIso }, from: e.status });
   }
   return changed;
+}
+
+/**
+ * 이미 저장된 행동 링크 정리 (시작할 때 한 번, 여러 번 돌려도 결과가 같다).
+ * 링크 검사를 넣기 전에 들어간 소개 글·기사·SNS 주소, 원문 자체 주소를 비운다. 원문은 '원문 보기'로 계속 보인다.
+ * @returns 비운 행사 수
+ */
+export async function cleanupActionLinks(db: Db): Promise<number> {
+  const rows = await db.all<{ id: number; ticket_url: string }>(sql`SELECT id, ticket_url FROM events WHERE ticket_url IS NOT NULL`);
+  let cleared = 0;
+  for (const r of rows) {
+    const srcs = await db.all<{ url: string | null; adapter: string }>(sql`
+      SELECT ri.url AS url, s.adapter AS adapter FROM event_sources es
+      JOIN raw_items ri ON ri.id = es.raw_item_id JOIN sources s ON s.id = ri.source_id
+      WHERE es.event_id = ${r.id}
+    `);
+    const fromTicketSource = srcs.some((s) => s.adapter === 'ticket' || s.adapter === 'kopis');
+    const ok = actionUrl(r.ticket_url) !== null && (fromTicketSource || srcs.every((s) => actionUrl(r.ticket_url, { url: s.url, adapter: s.adapter }) !== null));
+    if (ok) continue;
+    await db.update(events).set({ ticketUrl: null }).where(eq(events.id, r.id));
+    cleared++;
+  }
+  return cleared;
 }

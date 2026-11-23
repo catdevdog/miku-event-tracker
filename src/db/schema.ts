@@ -22,7 +22,7 @@ export const SOURCE_REGIONS = ['KR', 'JP', 'GLOBAL'] as const;
 export const JOB_STATUSES = ['running', 'ok', 'error', 'skipped'] as const;
 export const KEYWORD_HITS = ['strong', 'weak', 'none'] as const;
 export const LLM_STATUSES = ['pending', 'done', 'skipped', 'error'] as const;
-export const EVENT_KINDS = ['concert', 'booth', 'stage', 'popup', 'cafe', 'exhibition', 'live_viewing', 'goods', 'other'] as const;
+export const EVENT_KINDS = ['concert', 'booth', 'stage', 'popup', 'cafe', 'exhibition', 'live_viewing', 'goods', 'collab', 'other'] as const;
 export const OFFICIALITIES = ['crypton', 'licensed', 'permitted_doujin', 'unverified'] as const;
 export const EVENT_REGIONS = ['KR', 'JP', 'OTHER'] as const;
 export const EVENT_STATUSES = ['announced', 'ticket_scheduled', 'on_sale', 'ongoing', 'ended', 'cancelled'] as const;
@@ -143,6 +143,10 @@ export const events = sqliteTable(
     dedupKey: text('dedup_key').notNull().unique(),
     needsReview: integer('needs_review').notNull().default(0),
     mergedInto: integer('merged_into').references((): AnySQLiteColumn => events.id),
+    // 다른 출처가 쓴 제목들 (JSON 배열). 같은 행사 찾기에 쓴다
+    aliases: text('aliases').notNull().default('[]'),
+    // 같은 행사로 의심되는 기존 행사. 값이 있으면 검수 카드에 [합치기]·[별개 행사]가 뜬다
+    dupOfId: integer('dup_of_id').references((): AnySQLiteColumn => events.id),
     createdAt: text('created_at').notNull().default(now),
     updatedAt: text('updated_at').notNull().default(now),
   },

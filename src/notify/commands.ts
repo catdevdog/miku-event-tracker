@@ -6,6 +6,8 @@ import type { EventScope } from '../services/events.js';
 import type { Diagnostics, SourceFunnelRow } from '../services/diagnostics.js';
 import type { EventRow } from '../pipeline/merge.js';
 import { formatKst, textTable } from './format.js';
+import { EVENT_KINDS } from '../db/schema.js';
+import { KIND_GROUPS, kindLabel, type KindGroup } from './labels.js';
 import type { OutgoingMessage } from './types.js';
 import { diagnosticsCard, eventsCard, EVENTS_PAGE_SIZE, recentCard, sourcesCard } from './cards.js';
 
@@ -27,6 +29,12 @@ export const commandDefinitions = [
           { name: '해외 (일본 제외)', value: 'overseas' },
           { name: '전체', value: 'all' },
         ),
+    )
+    .addStringOption((o) =>
+      o
+        .setName('유형')
+        .setDescription('행사 유형 (기본: 전체)')
+        .addChoices(...Object.entries(KIND_GROUPS).map(([value, g]) => ({ name: g.label, value }))),
     )
     .addStringOption((o) => o.setName('검색').setDescription('행사 이름으로 찾기 (입력하면 후보가 떠요)').setAutocomplete(true))
     .toJSON(),
@@ -75,10 +83,20 @@ export const commandDefinitions = [
     .addSubcommand((s) =>
       s
         .setName('행사')
-        .setDescription('행사 수정·숨기기·다시 보이기')
+        .setDescription('행사 수정·유형 변경·숨기기·다시 보이기')
         .addStringOption((o) => o.setName('행사').setDescription('행사 이름 또는 #번호').setRequired(true).setAutocomplete(true))
         .addStringOption((o) =>
-          o.setName('동작').setDescription('할 일').setRequired(true).addChoices({ name: '수정', value: 'edit' }, { name: '숨기기', value: 'hide' }, { name: '다시 보이기', value: 'unhide' }),
+          o
+            .setName('동작')
+            .setDescription('할 일')
+            .setRequired(true)
+            .addChoices({ name: '수정', value: 'edit' }, { name: '유형 변경', value: 'kind' }, { name: '숨기기', value: 'hide' }, { name: '다시 보이기', value: 'unhide' }),
+        )
+        .addStringOption((o) =>
+          o
+            .setName('유형')
+            .setDescription('유형 변경일 때: 바꿀 유형')
+            .addChoices(...EVENT_KINDS.map((k) => ({ name: kindLabel(k), value: k }))),
         ),
     )
     .addSubcommand((s) =>
@@ -188,9 +206,9 @@ function shortDate(start: string | null, end: string | null): string {
  * /행사 응답. 카드는 8건씩 페이지로 나누고(page), 임베드(대체용)는 해당 페이지를 표로 보여 준다.
  * links: 행사 id → 예매(없으면 원문) URL
  */
-export function buildEventsReply(rows: EventRow[], scope: EventScope = 'all', page = 0, links: Map<number, string> = new Map()): OutgoingMessage {
-  const title = `다가오는 행사 · ${SCOPE_KO[scope]}`;
-  const card = eventsCard(rows, scope, page, links);
+export function buildEventsReply(rows: EventRow[], scope: EventScope = 'all', page = 0, links: Map<number, string> = new Map(), kind?: KindGroup): OutgoingMessage {
+  const title = `다가오는 행사 · ${SCOPE_KO[scope]}${kind ? ` · ${KIND_GROUPS[kind].label}` : ''}`;
+  const card = eventsCard(rows, scope, page, links, kind);
   if (rows.length === 0) {
     return { card, embeds: [{ title, description: '조건에 맞는 다가오는 행사가 없습니다. (종료·취소·검수 대기 행사는 빠집니다)', color: COLOR.info }] };
   }

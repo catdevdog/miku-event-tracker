@@ -5,7 +5,7 @@ import type { EventRow } from '../pipeline/merge.js';
 import { sha256 } from '../adapters/http.js';
 import { eventLinks } from '../services/events.js';
 import { formatKstShort, formatPeriodKo } from './format.js';
-import { KIND_KO, OFFICIALITY_KO, REGION_IMAGES } from './labels.js';
+import { OFFICIALITY_KO, REGION_IMAGES, kindLabel } from './labels.js';
 import type { GuildEventSpec } from './discord.js';
 
 /**
@@ -23,8 +23,12 @@ export const CREATE_BATCH = 5;
 
 const kstAt = (ymd: string, hour: number) => new Date(`${ymd}T${String(hour).padStart(2, '0')}:00:00+09:00`).toISOString();
 
+/** 서버 예약 이벤트로 만들지 않는 유형 (발매·콜라보 캠페인) */
+export const NO_GUILD_EVENT_KINDS = new Set(['goods', 'collab']);
+
 export function guildEventSpec(e: EventRow, link: string | undefined, now: Date): GuildEventSpec | null {
   if (e.region !== 'KR' || e.needsReview !== 0 || !e.startDate) return null;
+  if (NO_GUILD_EVENT_KINDS.has(e.kind)) return null; // 찾아가는 행사가 아닌 것
   if (!['announced', 'ticket_scheduled', 'on_sale'].includes(e.status)) return null;
   const startIso = kstAt(e.startDate, START_HOUR_KST);
   // 디스코드는 지난 시각으로 만들 수 없다 (여유 5분)
@@ -33,7 +37,7 @@ export function guildEventSpec(e: EventRow, link: string | undefined, now: Date)
   const description = [
     (e.summaryKo ?? '').trim(),
     `📅 ${formatPeriodKo(e.startDate, e.endDate)}`,
-    `🏷️ ${KIND_KO[e.kind] ?? e.kind} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}`,
+    `🏷️ ${kindLabel(e.kind)} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}`,
     e.ticketOpenAt ? `🎫 티켓 오픈 ${formatKstShort(e.ticketOpenAt)} KST` : '',
     link ? `🔗 ${link}` : '',
     `※ 시각은 표시용(${START_HOUR_KST}~${END_HOUR_KST}시)이에요. 정확한 시간은 공지를 확인하세요.`,
@@ -102,7 +106,7 @@ export async function syncGuildEvents(db: Db, api: GuildEventApi, now = new Date
         await api.editGuildEvent(existingId, spec);
         await save(e.id, existingId, specHash(spec));
         result.updated++;
-      } else if (existingId && (e.status === 'cancelled' || e.needsReview === 2)) {
+      } else if (existingId && (e.status === 'cancelled' || e.needsReview === 2 || NO_GUILD_EVENT_KINDS.has(e.kind))) {
         await api.deleteGuildEvent(existingId).catch((err: unknown) => {
           if (!isUnknownEvent(err)) throw err;
         });

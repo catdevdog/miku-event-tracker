@@ -15,7 +15,11 @@ import type { RecentRawItem } from '../services/rawItems.js';
 import type { Diagnostics, SourceFunnelRow } from '../services/diagnostics.js';
 import type { EventDetail } from '../services/events.js';
 import { discordTime, formatKstShort, formatPeriodKo } from './format.js';
-import { CARD_COLOR, DOT, KIND_KO, OFFICIALITY_KO, REGION_IMAGES, STATUS_ICON, STATUS_KO, regionMeta } from './labels.js';
+import {
+  CARD_COLOR, DOT, KIND_GROUPS, OFFICIALITY_KO, REGION_IMAGES, STATUS_ICON, STATUS_KO, TICKETED_KINDS,
+  actionLabel, dateLabel, kindLabel, regionMeta, type KindGroup,
+} from './labels.js';
+import { linkTier } from '../pipeline/links.js';
 
 /**
  * 디스코드 Components V2 카드. 봇으로 보낼 때만 쓰고, 웹후크나 카드가 거부될 때는 같은 메시지의 embeds로 보낸다.
@@ -96,6 +100,28 @@ export function calendarLink(e: EventRow, detailUrl?: string): { label: string; 
   return { label: ticket ? '📅 티켓 오픈 캘린더에 추가' : '📅 캘린더에 추가', url };
 }
 
+/**
+ * 일정·장소·티켓 줄. 유형에 따라 다르다:
+ * 굿즈는 "발매", 팝업·카페·전시·콜라보는 "기간". 장소가 없는 굿즈·콜라보는 장소 줄을 뺀다.
+ * 티켓 줄은 예매가 있는 유형(공연·상영·무대)이거나 티켓 오픈 시각이 있을 때만 넣는다.
+ */
+export function detailLines(e: EventRow): string[] {
+  const place = [e.city, e.venue].filter(Boolean).join(' · ');
+  const noPlaceKind = e.kind === 'goods' || e.kind === 'collab';
+  return [
+    `📅 **${dateLabel(e.kind)}**　${formatPeriodKo(e.startDate, e.endDate)}`,
+    ...(place || !noPlaceKind ? [`📍 **장소**　${esc(place || '미정')}`] : []),
+    ...(e.ticketOpenAt
+      ? [`🎫 **티켓 오픈**　${formatKstShort(e.ticketOpenAt)} KST · ${discordTime(e.ticketOpenAt, 'R')}`]
+      : TICKETED_KINDS.has(e.kind)
+        ? ['🎫 **티켓 오픈**　미정']
+        : []),
+  ];
+}
+
+/** 행동 링크(예매·예약·판매) 버튼 문구 */
+export const actionButtonLabel = (e: Pick<EventRow, 'kind'>, url: string, short = false) => actionLabel(e.kind, linkTier(url) === 'ticket', short);
+
 /** 공지 카드: 머리말 → 제목·요약 → 일정·장소·티켓 → 지역 이미지 → 버튼(예매·원문·캘린더) */
 export function noticeCard(
   e: EventRow,
@@ -106,22 +132,14 @@ export function noticeCard(
   const ticketUrl = linkable(e.ticketUrl) ? e.ticketUrl : undefined;
   const sourceUrl = sourceUrls.find(linkable);
   const titleUrl = ticketUrl ?? sourceUrl;
-  const place = [e.city, e.venue].filter(Boolean).join(' · ') || '미정';
   const summary = (e.summaryKo ?? '').trim();
-
-  const details = [
-    `📅 **일정**　${formatPeriodKo(e.startDate, e.endDate)}`,
-    `📍 **장소**　${esc(place)}`,
-    e.ticketOpenAt
-      ? `🎫 **티켓 오픈**　${formatKstShort(e.ticketOpenAt)} KST · ${discordTime(e.ticketOpenAt, 'R')}`
-      : '🎫 **티켓 오픈**　미정',
-  ];
+  const details = detailLines(e);
 
   const c = new ContainerBuilder()
     .setAccentColor(head.color)
     .addTextDisplayComponents((t) =>
       t.setContent(
-        `-# ${head.icon} ${head.label}　·　${region.flag} ${region.label} · ${KIND_KO[e.kind] ?? e.kind} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}`,
+        `-# ${head.icon} ${head.label}　·　${region.flag} ${region.label} · ${kindLabel(e.kind)} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}`,
       ),
     )
     .addTextDisplayComponents((t) =>
@@ -138,8 +156,8 @@ export function noticeCard(
   if (image) c.addMediaGalleryComponents((g) => g.addItems((i) => i.setURL(image).setDescription(`${region.label} 행사`)));
 
   const buttons: ButtonBuilder[] = [];
-  if (ticketUrl) buttons.push(linkButton('🎫 예매하기', ticketUrl));
-  if (sourceUrl) buttons.push(linkButton('📰 원문 보기', sourceUrl));
+  if (ticketUrl) buttons.push(linkButton(actionButtonLabel(e, ticketUrl), ticketUrl));
+  if (sourceUrl && sourceUrl !== ticketUrl) buttons.push(linkButton('📰 원문 보기', sourceUrl));
   const cal = calendarLink(e, titleUrl);
   if (cal) buttons.push(linkButton(cal.label, cal.url));
   // 개인 리마인더 (봇으로 보낸 카드에서만 동작. 웹후크는 카드 대신 임베드라 버튼이 없다)
@@ -163,15 +181,15 @@ function eventBlock(e: EventRow, link: string | undefined): ContainerBuilder {
       : '';
   const text = [
     `### ${region.flag} ${esc(e.title)}`,
-    `📅 ${formatPeriodKo(e.startDate, e.endDate)}`,
+    `📅 ${e.kind === 'goods' ? '발매 ' : ''}${formatPeriodKo(e.startDate, e.endDate)}`,
     ...(place ? [`📍 ${esc(place)}`] : []),
     `${STATUS_ICON[e.status] ?? '📢'} **${STATUS_KO[e.status] ?? e.status}**${ticket}`,
-    `-# ${KIND_KO[e.kind] ?? e.kind} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}`,
+    `-# ${kindLabel(e.kind)} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}`,
   ].join('\n');
   const c = new ContainerBuilder().setAccentColor(region.color);
   if (link) {
     c.addSectionComponents((s) =>
-      s.addTextDisplayComponents((t) => t.setContent(text)).setButtonAccessory(linkButton(e.ticketUrl === link ? '🎫 예매' : '🔗 원문', link)),
+      s.addTextDisplayComponents((t) => t.setContent(text)).setButtonAccessory(linkButton(e.ticketUrl === link ? actionButtonLabel(e, link, true) : '🔗 원문', link)),
     );
   } else {
     c.addTextDisplayComponents((t) => t.setContent(text));
@@ -179,20 +197,22 @@ function eventBlock(e: EventRow, link: string | undefined): ContainerBuilder {
   return c;
 }
 
-/** /행사 페이지 버튼 custom_id: "ev:<범위>:<페이지>" */
-export const eventsPageId = (scope: EventScope, page: number) => `ev:${scope}:${page}`;
+/** /행사 페이지 버튼 custom_id: "ev:<범위>:<페이지>" 또는 유형 필터가 있으면 "ev:<범위>:<페이지>:<유형 묶음>" */
+export const eventsPageId = (scope: EventScope, page: number, kind?: KindGroup) => `ev:${scope}:${page}${kind ? `:${kind}` : ''}`;
 
-export function parseEventsPageId(id: string): { scope: string; page: number } | null {
-  const m = /^ev:([a-z]+):(\d+)$/.exec(id);
-  return m ? { scope: m[1]!, page: Number(m[2]) } : null;
+export function parseEventsPageId(id: string): { scope: string; page: number; kind?: string } | null {
+  const m = /^ev:([a-z]+):(\d+)(?::([a-z]+))?$/.exec(id);
+  return m ? { scope: m[1]!, page: Number(m[2]), ...(m[3] ? { kind: m[3] } : {}) } : null;
 }
 
 /** /행사 카드. 행사마다 지역 색 카드 + 예매(없으면 원문) 버튼, 8건 넘으면 이전·다음 버튼 */
-export function eventsCard(rows: EventRow[], scope: EventScope, page: number, links: Map<number, string>): Card {
+export function eventsCard(rows: EventRow[], scope: EventScope, page: number, links: Map<number, string>, kind?: KindGroup): Card {
   const pages = Math.max(1, Math.ceil(rows.length / EVENTS_PAGE_SIZE));
   const p = Math.min(Math.max(0, page), pages - 1);
   const slice = rows.slice(p * EVENTS_PAGE_SIZE, (p + 1) * EVENTS_PAGE_SIZE);
-  const out: Card = [header(`🎤 다가오는 행사 · ${SCOPE_TITLE[scope]}`, `${rows.length}건 · 종료·취소·검수 대기 제외 · 한국 시간`)];
+  const out: Card = [
+    header(`🎤 다가오는 행사 · ${SCOPE_TITLE[scope]}${kind ? ` · ${KIND_GROUPS[kind].label}` : ''}`, `${rows.length}건 · 종료·취소·검수 대기 제외 · 한국 시간`),
+  ];
   if (slice.length === 0) {
     out.push(
       new ContainerBuilder()
@@ -212,9 +232,9 @@ export function eventsCard(rows: EventRow[], scope: EventScope, page: number, li
     out.push(
       new ActionRowBuilder<ButtonBuilder>()
         .setComponents(
-          new ButtonBuilder().setCustomId(eventsPageId(scope, p - 1)).setLabel('◀ 이전').setStyle(ButtonStyle.Secondary).setDisabled(p === 0),
+          new ButtonBuilder().setCustomId(eventsPageId(scope, p - 1, kind)).setLabel('◀ 이전').setStyle(ButtonStyle.Secondary).setDisabled(p === 0),
           new ButtonBuilder().setCustomId('ev:pos').setLabel(`${p + 1} / ${pages}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
-          new ButtonBuilder().setCustomId(eventsPageId(scope, p + 1)).setLabel('다음 ▶').setStyle(ButtonStyle.Primary).setDisabled(p === pages - 1),
+          new ButtonBuilder().setCustomId(eventsPageId(scope, p + 1, kind)).setLabel('다음 ▶').setStyle(ButtonStyle.Primary).setDisabled(p === pages - 1),
         )
         .toJSON(),
     );
@@ -314,7 +334,11 @@ export function diagnosticsCard(d: Diagnostics): Card {
 
   const events = new ContainerBuilder()
     .setAccentColor(CARD_COLOR.miku)
-    .addTextDisplayComponents((t) => t.setContent(['### 📊 행사 현황', ...regionLines].join('\n')))
+    .addTextDisplayComponents((t) =>
+      t.setContent(
+        ['### 📊 행사 현황', ...regionLines, ...(d.kinds.length ? [`-# 다가오는 행사 유형: ${d.kinds.map((k) => `${kindLabel(k.kind)} ${k.upcoming}`).join(' · ')}`] : [])].join('\n'),
+      ),
+    )
     .addTextDisplayComponents((t) => t.setContent('-# 다가옴: 발표·예정·판매·진행 (검수 대기 제외) · 검수: 확신이 낮아 알림을 보내지 않은 행사'))
     .addSeparatorComponents((s) => s.setDivider(true).setSpacing(SeparatorSpacingSize.Small))
     .addTextDisplayComponents((t) => t.setContent(['**최근 국내 행사** (종료 포함, 최근 갱신 순)', ...recent].join('\n').slice(0, 1500)));
@@ -360,19 +384,13 @@ export function eventDetailCard(d: EventDetail, opts: { threadUrl?: string } = {
   const region = regionMeta(e.region);
   const ticketUrl = linkable(e.ticketUrl) ? e.ticketUrl : undefined;
   const titleUrl = ticketUrl ?? d.sources.map((s) => s.url).find(linkable);
-  const place = [e.city, e.venue].filter(Boolean).join(' · ') || '미정';
   const summary = (e.summaryKo ?? '').trim();
-  const info = [
-    `📅 **일정**　${formatPeriodKo(e.startDate, e.endDate)}`,
-    `📍 **장소**　${esc(place)}`,
-    e.ticketOpenAt ? `🎫 **티켓 오픈**　${formatKstShort(e.ticketOpenAt)} KST · ${discordTime(e.ticketOpenAt, 'R')}` : '🎫 **티켓 오픈**　미정',
-    ...(d.parent ? [`🏟️ **상위 행사**　${esc(d.parent.title)}`] : []),
-  ];
+  const info = [...detailLines(e), ...(d.parent ? [`🏟️ **상위 행사**　${esc(d.parent.title)}`] : [])];
   const c = new ContainerBuilder()
     .setAccentColor(region.color)
     .addTextDisplayComponents((t) =>
       t.setContent(
-        `-# ${region.flag} ${region.label} · ${KIND_KO[e.kind] ?? e.kind} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}　·　${STATUS_ICON[e.status] ?? '📢'} ${STATUS_KO[e.status] ?? e.status}${e.needsReview === 1 ? ' · 검수 대기' : e.needsReview === 2 ? ' · 숨김' : ''}`,
+        `-# ${region.flag} ${region.label} · ${kindLabel(e.kind)} · ${OFFICIALITY_KO[e.officiality] ?? e.officiality}　·　${STATUS_ICON[e.status] ?? '📢'} ${STATUS_KO[e.status] ?? e.status}${e.needsReview === 1 ? ' · 검수 대기' : e.needsReview === 2 ? ' · 숨김' : ''}`,
       ),
     )
     .addTextDisplayComponents((t) =>
@@ -393,7 +411,7 @@ export function eventDetailCard(d: EventDetail, opts: { threadUrl?: string } = {
     );
   }
   const buttons: ButtonBuilder[] = [];
-  if (ticketUrl) buttons.push(linkButton('🎫 예매하기', ticketUrl));
+  if (ticketUrl) buttons.push(linkButton(actionButtonLabel(e, ticketUrl), ticketUrl));
   const cal = calendarLink(e, titleUrl);
   if (cal) buttons.push(linkButton('📅 캘린더', cal.url));
   if (e.status !== 'ended' && e.status !== 'cancelled' && e.needsReview === 0) {

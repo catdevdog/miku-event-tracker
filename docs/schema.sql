@@ -66,7 +66,7 @@ CREATE INDEX idx_raw_items_purge ON raw_items(purge_after);
 CREATE TABLE events (
   id              INTEGER PRIMARY KEY,
   title           TEXT    NOT NULL,
-  kind            TEXT    NOT NULL CHECK (kind IN ('concert','booth','stage','popup','cafe','exhibition','live_viewing','goods','other')),
+  kind            TEXT    NOT NULL CHECK (kind IN ('concert','booth','stage','popup','cafe','exhibition','live_viewing','goods','collab','other')),
   officiality     TEXT    NOT NULL CHECK (officiality IN ('crypton','licensed','permitted_doujin','unverified')),
   region          TEXT    NOT NULL CHECK (region IN ('KR','JP','OTHER')),
   city            TEXT,
@@ -81,6 +81,8 @@ CREATE TABLE events (
   dedup_key       TEXT    NOT NULL UNIQUE,               -- 정규화 행사명 + 시작일 + 장소
   needs_review    INTEGER NOT NULL DEFAULT 0,            -- 0 확정, 1 검수 대기(LLM 확신도 낮음), 2 검수에서 무시
   merged_into     INTEGER REFERENCES events(id),         -- /관리 합치기로 흡수된 행사 → 남긴 행사 (새 출처도 그쪽으로)
+  aliases         TEXT    NOT NULL DEFAULT '[]',         -- 다른 출처가 쓴 제목들 (JSON 배열). 같은 행사 찾기에 쓴다
+  dup_of_id       INTEGER REFERENCES events(id),         -- 같은 행사로 의심되는 기존 행사 (검수 카드에 합치기·별개 버튼)
   created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );

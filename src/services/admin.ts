@@ -1,8 +1,8 @@
 import { and, asc, desc, eq, isNull, like, ne, or, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { KEYWORD_TIERS, eventSources, eventStateLog, eventWatchers, events, keywords, sources } from '../db/schema.js';
+import { EVENT_KINDS, KEYWORD_TIERS, eventSources, eventStateLog, eventWatchers, events, keywords, notifications, sources } from '../db/schema.js';
 import { detectLang } from '../db/seed.js';
-import type { EventRow } from '../pipeline/merge.js';
+import { normalizeKey, parseAliases, type EventRow } from '../pipeline/merge.js';
 import { deriveStatus, type EventStatus } from '../pipeline/state.js';
 
 /**
@@ -268,8 +268,15 @@ export async function mergeEvents(db: Db, keepId: number, absorbId: number, by: 
   for (const k of ['city', 'venue', 'startDate', 'endDate', 'ticketOpenAt', 'ticketUrl', 'summaryKo'] as const) {
     if (keep[k] == null && absorb[k] != null) (fill as Record<string, unknown>)[k] = absorb[k];
   }
-  await db.update(events).set({ ...fill, updatedAt: nowIso }).where(eq(events.id, keepId));
-  await db.update(events).set({ needsReview: 2, mergedInto: keepId, updatedAt: nowIso }).where(eq(events.id, absorbId));
+  // 흡수한 행사의 제목·별칭을 남긴 행사의 별칭으로 (다음에 같은 표기가 오면 바로 찾는다)
+  const names = [keep.title, ...parseAliases(keep.aliases)];
+  for (const t of [absorb.title, ...parseAliases(absorb.aliases)]) {
+    if (!names.some((n) => normalizeKey(n) === normalizeKey(t)) && names.length <= 12) names.push(t);
+  }
+  await db.update(events).set({ ...fill, aliases: JSON.stringify(names.slice(1)), updatedAt: nowIso }).where(eq(events.id, keepId));
+  await db.update(events).set({ needsReview: 2, mergedInto: keepId, dupOfId: null, updatedAt: nowIso }).where(eq(events.id, absorbId));
+  // 흡수한 행사의 아직 안 보낸 알림은 보내지 않는다
+  await db.delete(notifications).where(and(eq(notifications.eventId, absorbId), eq(notifications.status, 'queued')));
   await db.insert(eventStateLog).values({
     eventId: keepId,
     fromStatus: keep.status,
@@ -278,4 +285,23 @@ export async function mergeEvents(db: Db, keepId: number, absorbId: number, by: 
     createdAt: nowIso,
   });
   return `🔗 #${absorb.id} **${absorb.title}** → #${keep.id} **${keep.title}**에 합쳤어요.${Object.keys(fill).length ? ` 비어 있던 ${Object.keys(fill).length}개 항목을 채웠어요.` : ''}`;
+}
+
+export type EventKind = (typeof EVENT_KINDS)[number];
+
+/** 유형 변경 (잘못 분류된 행사). 바뀐 내용을 event_state_log에 남긴다 */
+export async function setEventKind(db: Db, id: number, kind: EventKind, by: string, now = new Date()): Promise<EventRow | null> {
+  const e = await getEvent(db, id);
+  if (!e) return null;
+  if (e.kind === kind) return e;
+  const nowIso = now.toISOString();
+  const [updated] = await db.update(events).set({ kind, updatedAt: nowIso }).where(eq(events.id, id)).returning();
+  await db.insert(eventStateLog).values({
+    eventId: id,
+    fromStatus: e.status,
+    toStatus: e.status,
+    changedFields: JSON.stringify({ kind: { from: e.kind, to: kind }, by: `admin:${by}` }),
+    createdAt: nowIso,
+  });
+  return updated ?? null;
 }

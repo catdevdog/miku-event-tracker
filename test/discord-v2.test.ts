@@ -204,7 +204,7 @@ describe('공지 스레드', () => {
     const bot = fakeBot();
     expect(await deliverNotice(deps(bot), job(event.id, 'new'))).toBe('new');
     expect(bot.post).toHaveBeenLastCalledWith(NOTICE, expect.anything(), { mentionRoleId: 'kr' });
-    expect(bot.startThread).toHaveBeenCalledWith(NOTICE, 'm-1', '12.10 하츠네 미쿠 팝업 in 홍대');
+    expect(bot.startThread).toHaveBeenCalledWith(NOTICE, 'm-1', '🏪 12.10 하츠네 미쿠 팝업 in 홍대');
     const [ed] = await t.db.select().from(eventDiscord).where(eq(eventDiscord.eventId, event.id));
     expect([ed!.noticeMessageId, ed!.noticeThreadId]).toEqual(['m-1', 'thread-1']);
 
@@ -328,13 +328,13 @@ describe('/관리', () => {
 
   it('합치기: 출처·리마인더를 옮기고, 이후 같은 제목의 새 출처도 남긴 행사로 간다', async () => {
     const { event: keep } = await merge({ venue: null, start_date: '2026-12-10' });
-    const { event: absorb } = await merge({ title: 'MIKU POP-UP STORE HONGDAE', venue: '홍대 AK', start_date: '2026-12-11', ticket_url: 'https://x.com/t' });
+    const { event: absorb } = await merge({ title: 'MIKU POP-UP STORE HONGDAE', venue: '홍대 AK', start_date: '2026-12-11', ticket_url: 'https://shop.example.com/t' });
     await toggleWatch(t.db, absorb.id, 'u-1', NOW);
     expect(await mergeEvents(t.db, keep.id, absorb.id, 'u-admin', NOW)).toContain('합쳤어요');
     const srcs = await t.db.select().from(eventSources).where(eq(eventSources.eventId, keep.id));
     expect(srcs).toHaveLength(2);
     const [k] = await t.db.select().from(events).where(eq(events.id, keep.id));
-    expect(k!.ticketUrl).toBe('https://x.com/t'); // 빈 항목 채움
+    expect(k!.ticketUrl).toBe('https://shop.example.com/t'); // 빈 항목 채움
     const [a] = await t.db.select().from(events).where(eq(events.id, absorb.id));
     expect([a!.needsReview, a!.mergedInto]).toEqual([2, keep.id]);
     expect((await findExistingEvent(t.db, { ...base, title: 'MIKU POP-UP STORE HONGDAE', venue: '홍대 AK', start_date: '2026-12-11' }))!.id).toBe(keep.id);

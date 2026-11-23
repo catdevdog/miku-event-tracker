@@ -133,7 +133,7 @@ export async function processPendingItems(deps: PipelineDeps): Promise<ProcessRe
         body,
         now: now(),
       };
-      const logCall = async (c: ExtractCall) => {
+      const logCall = async (c: Pick<ExtractCall, 'model' | 'inputTokens' | 'outputTokens'>) => {
         await db.insert(llmCalls).values({
           rawItemId: item.id,
           model: c.model,
@@ -162,6 +162,14 @@ export async function processPendingItems(deps: PipelineDeps): Promise<ProcessRe
         needsReview: ext.confidence < CONFIDENCE_THRESHOLD,
         fromKopis: source.adapter === 'kopis',
         now: now(),
+        item: { url: item.url, adapter: source.adapter },
+        matcher: deps.extractor.match
+          ? async (e, candidates) => {
+              const m = await deps.extractor!.match!(e, candidates);
+              await logCall(m);
+              return m.result;
+            }
+          : undefined,
       });
       result.queued += await planForChange(db, merged.event, merged);
       await db.update(rawItems).set({ llmStatus: 'done' }).where(eq(rawItems.id, item.id));

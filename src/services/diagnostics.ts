@@ -31,6 +31,8 @@ export interface SourceFunnelRow {
 
 export interface Diagnostics {
   regions: RegionEventCounts[];
+  /** 다가오는 확정 행사의 유형별 건수 (많은 순) */
+  kinds: { kind: string; upcoming: number }[];
   recentKr: EventRow[];
   krSources: SourceFunnelRow[];
   pendingItems: number;
@@ -102,5 +104,12 @@ export async function getDiagnostics(db: Db): Promise<Diagnostics> {
            sum(CASE WHEN llm_status = 'error' THEN 1 ELSE 0 END) AS error
     FROM raw_items
   `);
-  return { regions, recentKr, krSources, pendingItems: Number(backlog?.pending ?? 0), errorItems: Number(backlog?.error ?? 0) };
+  const kinds = (
+    await db.all<{ kind: string; n: number }>(sql`
+      SELECT kind, count(*) AS n FROM events
+      WHERE needs_review = 0 AND status NOT IN ('ended','cancelled')
+      GROUP BY kind ORDER BY n DESC, kind
+    `)
+  ).map((r) => ({ kind: r.kind, upcoming: Number(r.n) }));
+  return { regions, kinds, recentKr, krSources, pendingItems: Number(backlog?.pending ?? 0), errorItems: Number(backlog?.error ?? 0) };
 }

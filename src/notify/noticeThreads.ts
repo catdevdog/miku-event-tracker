@@ -7,6 +7,7 @@ import { discordErrorCode, type DiscordBot } from './discord.js';
 import type { Notifier } from './notifier.js';
 import { eventSourceUrls, renderEventMessage, type NotifyReason } from './planner.js';
 import { mentionRoleFor } from './subscriptions.js';
+import { KIND_ICON } from './labels.js';
 import type { OutgoingMessage } from './types.js';
 
 /**
@@ -22,7 +23,7 @@ export interface NoticeDeliveryDeps {
   db: Db;
   notifier: Notifier;
   noticeChannelId?: string;
-  bot?: Pick<DiscordBot, 'isReady' | 'post' | 'editMessage' | 'startThread'>;
+  bot?: Pick<DiscordBot, 'isReady' | 'post' | 'editMessage' | 'startThread'> & Partial<Pick<DiscordBot, 'deleteMessage'>>;
   log?: Pick<Console, 'warn'>;
   /** 봇이 공지 채널에 못 써서 웹후크로 돌렸을 때 (관리자 경보용) */
   onBotFailure?: (err: unknown) => void | Promise<void>;
@@ -69,9 +70,10 @@ async function saveNoticeIds(db: Db, eventId: number, ids: { noticeMessageId?: s
 }
 
 /** 스레드 이름: "12.04 AGF 2026 미쿠 부스" (100자) */
-export function threadName(e: Pick<EventRow, 'title' | 'startDate'>): string {
+export function threadName(e: Pick<EventRow, 'title' | 'startDate'> & { kind?: string }): string {
   const date = e.startDate ? `${e.startDate.slice(5).replace('-', '.')} ` : '';
-  return `${date}${e.title}`.slice(0, 100);
+  const icon = e.kind && KIND_ICON[e.kind] ? `${KIND_ICON[e.kind]} ` : '';
+  return `${icon}${date}${e.title}`.slice(0, 100);
 }
 
 export async function deliverNotice(deps: NoticeDeliveryDeps, job: NoticeJob): Promise<NoticeOutcome> {
@@ -151,4 +153,23 @@ export async function noticeThreadUrl(db: Db, guildId: string | undefined, event
   if (!guildId) return undefined;
   const ids = await noticeIds(db, eventId);
   return ids.threadId ? `https://discord.com/channels/${guildId}/${ids.threadId}` : undefined;
+}
+
+/**
+ * 합쳐서 숨긴 행사의 공지를 지운다. 스레드가 있으면 남긴 행사의 공지로 가는 안내를 한 줄 남긴다(스레드는 지우지 않음).
+ * @returns 공지를 지웠으면 true
+ */
+export async function removeNotice(deps: NoticeDeliveryDeps, absorbedId: number, keptId: number, guildId?: string): Promise<boolean> {
+  const { db, bot, noticeChannelId: channelId } = deps;
+  if (!bot?.isReady() || !bot.deleteMessage || !channelId) return false;
+  const ids = await noticeIds(db, absorbedId);
+  if (!ids.messageId) return false;
+  await bot.deleteMessage(channelId, ids.messageId);
+  if (ids.threadId) {
+    const kept = await noticeIds(db, keptId);
+    const link = guildId && kept.messageId ? ` → https://discord.com/channels/${guildId}/${channelId}/${kept.messageId}` : '';
+    await bot.post(ids.threadId, { content: `이 행사는 같은 행사의 다른 공지로 합쳐졌어요.${link}` }).catch(() => undefined);
+  }
+  await saveNoticeIds(db, absorbedId, { noticeMessageId: null, noticeThreadId: null });
+  return true;
 }
