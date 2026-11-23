@@ -6,6 +6,7 @@ import { kstDate } from '../pipeline/state.js';
 import { discordErrorCode, type DiscordBot } from './discord.js';
 import { discordTime } from './format.js';
 import { CARD_COLOR, DOT } from './labels.js';
+import { panelButtonRows } from './adminPanel.js';
 import type { OutgoingMessage } from './types.js';
 
 /**
@@ -81,7 +82,7 @@ const usd = (v: number) => `$${v.toFixed(v < 1 ? 3 : 2)}`;
 export function statusBoardMessage(d: StatusBoardData): OutgoingMessage {
   const healthy = d.sources.alert === 0 && d.errorItems === 0 && d.queue.failed === 0 && !d.notifyPaused;
   const lines = [
-    `## 📊 상태판`,
+    `## 📊 상태판 · 관리 패널`,
     `-# 10분마다 갱신 · 마지막 ${discordTime(d.now, 'R')}`,
   ];
   const body = [
@@ -97,8 +98,12 @@ export function statusBoardMessage(d: StatusBoardData): OutgoingMessage {
     .setAccentColor(healthy ? CARD_COLOR.ok : CARD_COLOR.alert)
     .addTextDisplayComponents((t) => t.setContent(lines.join('\n')))
     .addSeparatorComponents((s) => s.setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents((t) => t.setContent(body.join('\n')));
-  return { card: [c.toJSON()], content: [...lines, ...body].join('\n') };
+    .addTextDisplayComponents((t) => t.setContent(body.join('\n')))
+    .addSeparatorComponents((s) => s.setDivider(true).setSpacing(SeparatorSpacingSize.Small));
+  // 관리 패널 버튼 (관리자만 동작). 누르면 누른 사람에게만 보이는 화면이 열린다
+  for (const row of panelButtonRows(d.notifyPaused)) c.addActionRowComponents((r) => r.setComponents(row));
+  c.addTextDisplayComponents((t) => t.setContent('-# 버튼은 서버 관리 권한이 있는 사람만 쓸 수 있어요 · `/관리` 명령으로도 같은 일을 할 수 있어요'));
+  return { card: [c.toJSON()], content: [...lines, ...body, '(버튼은 카드 형식에서만 보여요. `/관리` 명령을 쓰세요)'].join('\n') };
 }
 
 /** 상태판 메시지를 고친다. 없거나 지워졌으면 새로 올려 고정한다 */

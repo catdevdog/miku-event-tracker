@@ -89,6 +89,7 @@ if (config.DISCORD_BOT_TOKEN && config.DISCORD_APP_ID && config.DISCORD_GUILD_ID
     uptimeSec,
     dupSweep,
     postCalendar: () => discordJobs.postCalendar(),
+    refreshBoard: () => discordJobs.statusBoard(),
     setupNow: async () => {
       const r = await discordJobs.setup();
       await discordJobs.statusBoard().catch(() => null);

@@ -19,6 +19,7 @@ import {
   type Message,
   type MessageContextMenuCommandInteraction,
   type ModalSubmitInteraction,
+  type StringSelectMenuInteraction,
 } from 'discord.js';
 import type { ChannelSender, OutgoingMessage } from './types.js';
 import { commandDefinitions } from './commands.js';
@@ -68,6 +69,8 @@ export interface DiscordBotOptions {
   onAutocomplete?: (name: string, focused: { name: string; value: string }, ctx: InteractionCtx) => Promise<{ name: string; value: string }[]>;
   /** 버튼을 눌렀을 때. 모르는 버튼이면 null */
   onButton?: (customId: string, ctx: InteractionCtx) => Promise<ButtonResult>;
+  /** 선택 메뉴에서 골랐을 때 (관리 패널). 결과 처리는 버튼과 같다 */
+  onSelect?: (customId: string, values: string[], ctx: InteractionCtx) => Promise<ButtonResult>;
   /** 입력 창 제출 */
   onModal?: (customId: string, fields: Record<string, string>, ctx: InteractionCtx) => Promise<Reply>;
   /** 봇을 멘션한 질문에 대한 답. null이면 답하지 않는다 */
@@ -236,6 +239,12 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
       await handleAutocomplete(interaction).catch((err: unknown) => log.error(`자동완성 실패 (/${interaction.commandName}): ${errText(err)}`));
       return;
     }
+    if (interaction.isStringSelectMenu()) {
+      await handleComponent(interaction, () => (opts.onSelect ? opts.onSelect(interaction.customId, interaction.values, interactionCtx(interaction)) : Promise.resolve(null))).catch(
+        (err: unknown) => failed(interaction, `선택 ${interaction.customId}`, err),
+      );
+      return;
+    }
     if (interaction.isButton()) {
       await handleButton(interaction).catch((err: unknown) => failed(interaction, `버튼 ${interaction.customId}`, err));
       return;
@@ -251,7 +260,7 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
     });
   });
 
-  type Repliable = ButtonInteraction | ModalSubmitInteraction | ChatInputCommandInteraction | MessageContextMenuCommandInteraction;
+  type Repliable = ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction | ChatInputCommandInteraction | MessageContextMenuCommandInteraction;
 
   /**
    * 처리 중 오류: 누른 사람에게 원인을 짧게 보여 주고(디스코드 API 오류 문구, 시크릿 없음), 로그와 관리자 경보에 남긴다.
@@ -414,10 +423,29 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
     await interaction.respond(choices.slice(0, 25).map((c) => ({ name: c.name.slice(0, 100), value: c.value.slice(0, 100) })));
   }
 
-  async function handleButton(interaction: ButtonInteraction) {
-    const result = opts.onButton ? await opts.onButton(interaction.customId, interactionCtx(interaction)) : null;
+  function handleButton(interaction: ButtonInteraction) {
+    return handleComponent(interaction, () => (opts.onButton ? opts.onButton(interaction.customId, interactionCtx(interaction)) : Promise.resolve(null)));
+  }
+
+  /**
+   * 버튼·선택 메뉴 결과 처리. 2초 안에 결과가 안 나오면(설정 점검·중복검사처럼 오래 걸리는 작업)
+   * 누른 사람에게만 보이는 응답으로 미뤄 두고, 끝나면 그 응답에 결과를 쓴다.
+   */
+  async function handleComponent(interaction: ButtonInteraction | StringSelectMenuInteraction, produce: () => Promise<ButtonResult>) {
+    let deferring: Promise<unknown> | undefined;
+    const timer = setTimeout(() => {
+      deferring = interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch((err: unknown) => log.warn(`응답 미루기 실패: ${errText(err)}`));
+    }, 2000);
+    let result: ButtonResult;
+    try {
+      result = await produce();
+    } finally {
+      clearTimeout(timer);
+      await deferring;
+    }
     if (result && 'modal' in result) {
-      await interaction.showModal(modalPayload(result.modal));
+      if (interaction.deferred) await replyEphemeral(interaction, '입력 창을 여는 데 시간이 걸렸어요. 한 번 더 눌러 주세요.');
+      else await interaction.showModal(modalPayload(result.modal));
       return;
     }
     if (result && 'reply' in result) {
@@ -425,10 +453,13 @@ export function startDiscordBot(opts: DiscordBotOptions): DiscordBot {
       return;
     }
     if (!result?.card) {
-      await interaction.deferUpdate();
+      if (interaction.deferred) await interaction.deleteReply().catch(() => undefined);
+      else await interaction.deferUpdate();
       return;
     }
-    await interaction.update({ components: result.card, allowedMentions: { parse: [] } });
+    // 이미 미뤄 둔 뒤라면 메시지를 바꿀 수 없으므로 새 응답으로 보여 준다
+    if (interaction.deferred) await replyEphemeral(interaction, result);
+    else await interaction.update({ components: result.card, allowedMentions: { parse: [] } });
   }
 
   async function handleModal(interaction: ModalSubmitInteraction) {

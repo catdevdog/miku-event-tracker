@@ -37,6 +37,8 @@ import { createReport, firstUrl, postReportCard } from './reports.js';
 import { noticeThreadUrl, refreshNoticeCard, removeNotice, type NoticeDeliveryDeps } from './noticeThreads.js';
 import { KIND_GROUPS, kindLabel, parseKindGroup, type KindGroup } from './labels.js';
 import { planForChange } from './planner.js';
+import { createAdminPanel, isAdminPanelId, type AdminOps } from './adminPanel.js';
+import { statusBoardData, statusBoardMessage } from './statusBoard.js';
 import type { ButtonResult, CommandContext, CommandResult, DiscordBot, DiscordBotOptions, InteractionCtx, Reply } from './discord.js';
 import type { Notifier } from './notifier.js';
 
@@ -56,6 +58,8 @@ export interface InteractionDeps {
   dupSweep?: () => Promise<{ checked: number; flagged: number; more: boolean }>;
   /** /관리 달력: 이번 달 달력을 공지 채널에 올린다 */
   postCalendar?: () => Promise<string>;
+  /** 관리 패널(상태판) 메시지를 지금 고친다 */
+  refreshBoard?: () => Promise<unknown>;
   /** /관리 설정: 역할·패널·상태판을 지금 다시 맞춘다 */
   setupNow?: () => Promise<{ missing?: string[]; members?: { added: number; initialized: number; failed: number } | null; memberError?: string; errors?: string[] } | null>;
   now?: () => Date;
@@ -63,7 +67,7 @@ export interface InteractionDeps {
 
 const ADMIN_ONLY = '관리자(서버 관리 권한)만 쓸 수 있어요.';
 
-export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBotOptions, 'onCommand' | 'onAutocomplete' | 'onButton' | 'onModal'> {
+export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBotOptions, 'onCommand' | 'onAutocomplete' | 'onButton' | 'onSelect' | 'onModal'> {
   const { db } = deps;
   const now = deps.now ?? (() => new Date());
   const noticeDeps = (): NoticeDeliveryDeps => ({ db, notifier: deps.notifier, noticeChannelId: deps.noticeChannelId, bot: deps.bot() });
@@ -110,6 +114,84 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
     return '📮 제보 고마워요! Claude가 1~2분 안에 판정해서 미쿠 행사가 맞으면 공지 채널에 올려요.';
   };
 
+  /** 관리 작업 (명령 /관리 와 관리 패널 버튼이 같이 쓴다) */
+  const ops: AdminOps = {
+    editModal(e) {
+      const v = editDefaults(e);
+      return {
+        customId: `ed:${e.id}`,
+        title: `행사 #${e.id} 수정`,
+        inputs: [
+          { id: 'title', label: '제목', value: v.title, required: true, maxLength: 200 },
+          { id: 'dates', label: '일정 (2026-12-04 ~ 2026-12-06)', value: v.dates, placeholder: '비우면 미정', maxLength: 30 },
+          { id: 'venue', label: '장소 (도시 / 장소)', value: v.venue, placeholder: '예: 고양 / 킨텍스 제2전시장', maxLength: 150 },
+          { id: 'ticket_open', label: '티켓 오픈 (한국 시간)', value: v.ticket_open, placeholder: '2026-12-01 20:00, 비우면 미정', maxLength: 20 },
+          { id: 'ticket_url', label: '예매 링크', value: v.ticket_url, placeholder: 'https://', maxLength: 500 },
+        ],
+      };
+    },
+    async setKind(e, kind, userId) {
+      if (!(EVENT_KINDS as readonly string[]).includes(kind)) return '바꿀 유형을 골라 주세요.';
+      const updated = await setEventKind(db, e.id, kind as EventKind, userId, now());
+      if (updated) await refreshNoticeCard(noticeDeps(), updated).catch(() => false);
+      return `🏷️ #${e.id} **${e.title}** 유형: ${kindLabel(e.kind)} → ${kindLabel(kind)}`;
+    },
+    async setHidden(e, hidden) {
+      await setEventHidden(db, e.id, hidden, now());
+      return hidden
+        ? `🙈 #${e.id} **${e.title}**을(를) 숨겼어요. 목록·검색·서버 이벤트에서 빠지고 알림도 보내지 않아요.`
+        : `👀 #${e.id} **${e.title}**을(를) 다시 보이게 했어요.`;
+    },
+    async merge(keep, absorb, userId) {
+      const text = await mergeEvents(db, keep, absorb, userId, now());
+      if (!text.startsWith('🔗')) return text;
+      // 흡수한 행사의 공지는 지우고, 남긴 행사의 공지 카드는 채워진 내용으로 고친다
+      const removed = await removeNotice(noticeDeps(), absorb, keep, deps.guildId).catch(() => false);
+      const kept = await getEvent(db, keep);
+      if (kept) await refreshNoticeCard(noticeDeps(), kept).catch(() => false);
+      return `${text}${removed ? '\n중복 공지는 지웠어요.' : ''}`;
+    },
+    async notify(action) {
+      if (action === 'toggle') action = (await isNotifyPaused(db)) ? 'resume' : 'pause';
+      if (action === 'pause') await setSetting(db, SETTING.notifyPaused, '1', now());
+      if (action === 'resume') await deleteSetting(db, SETTING.notifyPaused);
+      const paused = await isNotifyPaused(db, deps.notifyPausedEnv);
+      const env = deps.notifyPausedEnv ? '\n-# 환경 변수 NOTIFY_PAUSED=1이 켜져 있어 여기서 재개해도 보내지 않아요. Railway 변수에서 지워 주세요.' : '';
+      return `${paused ? '⏸️ 알림 일시정지 중: 알림은 쌓아 두고 보내지 않아요.' : '▶️ 알림을 보내고 있어요.'}${env}`;
+    },
+    async dupSweep() {
+      if (!deps.dupSweep) return '중복 검사는 Claude API 키(ANTHROPIC_API_KEY)가 있어야 해요.';
+      const r = await deps.dupSweep();
+      return [
+        `🔁 다가오는 행사 중 겹쳐 보이는 ${r.checked}건을 확인했어요. 같은 행사로 의심되는 쌍: **${r.flagged}건**`,
+        r.flagged ? '1분 안에 관리자 채널에 [같은 행사로 합치기]·[별개 행사] 카드가 올라와요.' : '',
+        r.more ? '확인할 행사가 더 있어요. 한 번 더 실행해 주세요.' : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+    },
+    async calendar() {
+      return deps.postCalendar ? deps.postCalendar() : '봇이 준비되지 않았어요.';
+    },
+    async setup() {
+      const r = await deps.setupNow?.();
+      if (!r) return '봇이 준비되지 않았거나 공지 채널이 설정되지 않았어요.';
+      const lines = ['🔧 알림 역할·구독 패널·상태판을 다시 맞췄어요.'];
+      if (r.members) lines.push(`👥 국내 알림 역할: 이번에 ${r.members.added}명에게 줬어요${r.members.failed ? ` · 실패 ${r.members.failed}명` : ''} (새로 확인한 멤버 ${r.members.initialized}명)`);
+      if (r.memberError) lines.push(`⚠️ ${r.memberError}`);
+      if (r.missing?.length) lines.push(`⚠️ 부족한 권한: ${r.missing.join(', ')}`);
+      for (const e of r.errors ?? []) lines.push(`⚠️ ${e}`);
+      return lines.join('\n').slice(0, 1900);
+    },
+    detail: (id) => detail(id, { admin: true }),
+    diagnostics: async () => buildDiagnosticsReply(await getDiagnostics(db)),
+    board: async () => statusBoardMessage(await statusBoardData(db, now(), deps.notifyPausedEnv)),
+    refreshBoard: async () => {
+      await deps.refreshBoard?.().catch(() => undefined);
+    },
+  };
+  const panel = createAdminPanel({ db, ops, now });
+
   async function admin(ctx: CommandContext): Promise<CommandResult | null> {
     if (!ctx.isAdmin) return ADMIN_ONLY;
     switch (ctx.subcommand) {
@@ -130,78 +212,26 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
         const e = id ? await getEvent(db, id) : undefined;
         if (!e) return '행사를 찾을 수 없어요. 입력 중에 뜨는 목록에서 골라 주세요.';
         const action = ctx.getString('동작');
-        if (action === 'edit') {
-          const v = editDefaults(e);
-          return {
-            modal: {
-              customId: `ed:${e.id}`,
-              title: `행사 #${e.id} 수정`,
-              inputs: [
-                { id: 'title', label: '제목', value: v.title, required: true, maxLength: 200 },
-                { id: 'dates', label: '일정 (2026-12-04 ~ 2026-12-06)', value: v.dates, placeholder: '비우면 미정', maxLength: 30 },
-                { id: 'venue', label: '장소 (도시 / 장소)', value: v.venue, placeholder: '예: 고양 / 킨텍스 제2전시장', maxLength: 150 },
-                { id: 'ticket_open', label: '티켓 오픈 (한국 시간)', value: v.ticket_open, placeholder: '2026-12-01 20:00, 비우면 미정', maxLength: 20 },
-                { id: 'ticket_url', label: '예매 링크', value: v.ticket_url, placeholder: 'https://', maxLength: 500 },
-              ],
-            },
-          };
-        }
-        if (action === 'kind') {
-          const kind = ctx.getString('유형');
-          if (!kind || !(EVENT_KINDS as readonly string[]).includes(kind)) return '`유형` 옵션에서 바꿀 유형을 골라 주세요.';
-          const updated = await setEventKind(db, e.id, kind as EventKind, ctx.userId, now());
-          if (updated) await refreshNoticeCard(noticeDeps(), updated).catch(() => false);
-          return `🏷️ #${e.id} **${e.title}** 유형: ${kindLabel(e.kind)} → ${kindLabel(kind)}`;
-        }
-        const hidden = action === 'hide';
-        await setEventHidden(db, e.id, hidden, now());
-        return hidden
-          ? `🙈 #${e.id} **${e.title}**을(를) 숨겼어요. 목록·검색·서버 이벤트에서 빠지고 알림도 보내지 않아요.`
-          : `👀 #${e.id} **${e.title}**을(를) 다시 보이게 했어요.`;
+        if (action === 'edit') return { modal: ops.editModal(e) };
+        if (action === 'kind') return ops.setKind(e, ctx.getString('유형') ?? '', ctx.userId);
+        return ops.setHidden(e, action === 'hide');
       }
       case '합치기': {
         const keep = await resolveEventId(ctx.getString('남길행사'));
         const absorb = await resolveEventId(ctx.getString('합칠행사'));
         if (!keep || !absorb) return '행사를 찾을 수 없어요. 입력 중에 뜨는 목록에서 골라 주세요.';
-        const text = await mergeEvents(db, keep, absorb, ctx.userId, now());
-        if (!text.startsWith('🔗')) return text;
-        // 흡수한 행사의 공지는 지우고, 남긴 행사의 공지 카드는 채워진 내용으로 고친다
-        const removed = await removeNotice(noticeDeps(), absorb, keep, deps.guildId).catch(() => false);
-        const kept = await getEvent(db, keep);
-        if (kept) await refreshNoticeCard(noticeDeps(), kept).catch(() => false);
-        return `${text}${removed ? '\n중복 공지는 지웠어요.' : ''}`;
+        return ops.merge(keep, absorb, ctx.userId);
       }
       case '알림': {
         const action = ctx.getString('동작');
-        if (action === 'pause') await setSetting(db, SETTING.notifyPaused, '1', now());
-        if (action === 'resume') await deleteSetting(db, SETTING.notifyPaused);
-        const paused = await isNotifyPaused(db, deps.notifyPausedEnv);
-        const env = deps.notifyPausedEnv ? '\n-# 환경 변수 NOTIFY_PAUSED=1이 켜져 있어 여기서 재개해도 보내지 않아요. Railway 변수에서 지워 주세요.' : '';
-        return `${paused ? '⏸️ 알림 일시정지 중: 알림은 쌓아 두고 보내지 않아요.' : '▶️ 알림을 보내고 있어요.'}${env}`;
+        return ops.notify(action === 'pause' || action === 'resume' ? action : 'status');
       }
-      case '중복검사': {
-        if (!deps.dupSweep) return '중복 검사는 Claude API 키(ANTHROPIC_API_KEY)가 있어야 해요.';
-        const r = await deps.dupSweep();
-        return [
-          `🔁 다가오는 행사 중 겹쳐 보이는 ${r.checked}건을 확인했어요. 같은 행사로 의심되는 쌍: **${r.flagged}건**`,
-          r.flagged ? '1분 안에 관리자 채널에 [같은 행사로 합치기]·[별개 행사] 카드가 올라와요.' : '',
-          r.more ? '확인할 행사가 더 있어요. 한 번 더 실행해 주세요.' : '',
-        ]
-          .filter(Boolean)
-          .join('\n');
-      }
+      case '중복검사':
+        return ops.dupSweep();
       case '달력':
-        return deps.postCalendar ? deps.postCalendar() : '봇이 준비되지 않았어요.';
-      case '설정': {
-        const r = await deps.setupNow?.();
-        if (!r) return '봇이 준비되지 않았거나 공지 채널이 설정되지 않았어요.';
-        const lines = ['🔧 알림 역할·구독 패널·상태판을 다시 맞췄어요.'];
-        if (r.members) lines.push(`👥 국내 알림 역할: 이번에 ${r.members.added}명에게 줬어요${r.members.failed ? ` · 실패 ${r.members.failed}명` : ''} (새로 확인한 멤버 ${r.members.initialized}명)`);
-        if (r.memberError) lines.push(`⚠️ ${r.memberError}`);
-        if (r.missing?.length) lines.push(`⚠️ 부족한 권한: ${r.missing.join(', ')}`);
-        for (const e of r.errors ?? []) lines.push(`⚠️ ${e}`);
-        return lines.join('\n').slice(0, 1900);
-      }
+        return ops.calendar();
+      case '설정':
+        return ops.setup();
       default:
         return null;
     }
@@ -251,7 +281,17 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
       return [];
     },
 
+    async onSelect(customId, values, ctx): Promise<ButtonResult> {
+      if (!isAdminPanelId(customId)) return null;
+      if (!ctx.isAdmin) return { reply: ADMIN_ONLY };
+      return panel.onComponent(customId, values, ctx);
+    },
+
     async onButton(customId, ctx): Promise<ButtonResult> {
+      if (isAdminPanelId(customId)) {
+        if (!ctx.isAdmin) return { reply: ADMIN_ONLY };
+        return panel.onComponent(customId, [], ctx);
+      }
       const page = parseEventsPageId(customId);
       if (page) return eventsPage(parseEventScope(page.scope), page.page, parseKindGroup(page.kind));
       const review = parseReviewId(customId);
@@ -292,6 +332,7 @@ export function createInteractionHandlers(deps: InteractionDeps): Pick<DiscordBo
     },
 
     async onModal(customId, fields, ctx): Promise<Reply> {
+      if (isAdminPanelId(customId)) return ctx.isAdmin ? panel.onModal(customId, fields, ctx) : ADMIN_ONLY;
       const m = /^ed:(\d+)$/.exec(customId);
       if (!m) return '알 수 없는 입력 창이에요.';
       if (!ctx.isAdmin) return ADMIN_ONLY;
